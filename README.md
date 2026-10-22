@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 LAN/VPN remote desktop application. **Version 0.2.1 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 LAN/VPN remote desktop application. **Version 0.2.2 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.2.2 hardens pairing: remote computer names are stripped of control and text-direction characters, session approval prompts state the access mode first, wrong pairing codes lock out only the guessing address, and saved hosts are matched only by the address you typed.
 
 Version 0.2.1 adds automatic update checks, notifications, verified installer downloads, and user-confirmed installation. Open **App updates** in the local computer panel. The release source is `pitchiluxe/hearthlink` on GitHub; checks require an internet connection and a published release. Existing 0.2.0 installations need this first update-enabled version installed manually. [Update and publishing guide](docs/UPDATES.md).
 

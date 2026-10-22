@@ -45,7 +45,7 @@ if(Test-Path -LiteralPath $sourcePath) { Remove-Item -LiteralPath $sourcePath -F
 $archive=[IO.Compression.ZipFile]::Open($sourcePath,[IO.Compression.ZipArchiveMode]::Create)
 try {
     $sourceFiles=@('.gitignore','Directory.Build.props','build.ps1','global.json','README.md') | ForEach-Object {Get-Item -LiteralPath $_}
-    $sourceFiles+=Get-ChildItem -LiteralPath src,tests,docs,installer,third-party,assets,tools,website -Recurse -File | Where-Object {$_.FullName -notmatch '[\\/](bin|obj|\.vercel)[\\/]'}
+    $sourceFiles+=Get-ChildItem -LiteralPath src,tests,docs,installer,third-party,assets,tools,website -Recurse -File | Where-Object {$_.FullName -notmatch '[\\/](bin|obj|\.vercel)[\\/]' -and $_.Name -notlike '.env*'}
     foreach($file in $sourceFiles) {
         $relative=$file.FullName.Substring($PSScriptRoot.Length+1).Replace('\','/')
         [IO.Compression.ZipFileExtensions]::CreateEntryFromFile($archive,$file.FullName,$relative,[IO.Compression.CompressionLevel]::Optimal) | Out-Null
