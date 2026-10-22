@@ -79,6 +79,75 @@ Check(CaptureSizing.Fit(1080,1920,1280,720)==(405,720),"portrait monitor sizing 
 Check(!FilePolicy.ValidName("..\\secret.txt") && !FilePolicy.ValidName("../secret.txt"),"remote file names cannot traverse directories");
 Check(!FilePolicy.ValidName("C:\\file.txt") && !FilePolicy.ValidName("CON.txt") && !FilePolicy.ValidName("name. "),"remote file names reject absolute paths and Windows reserved names");
 Check(FilePolicy.ValidName("Project report.pdf"),"ordinary file name accepted");
+{
+    byte[] nonce=Enumerable.Range(1,32).Select(i=>(byte)i).ToArray();
+    byte[] expected=System.Text.Encoding.UTF8.GetBytes("hearthlink-relay-v1\n/v1/presence\n").Concat(nonce).ToArray();
+    Check(RelayProtocol.SignatureInput(RelayProtocol.Presence,nonce).SequenceEqual(expected) && !RelayProtocol.SignatureInput(RelayProtocol.Status,nonce).SequenceEqual(expected),"relay signature input is domain separated");
+    Check(new PairingCode("0420","12345678").Display=="0420-1234-5678" && PairingCode.TryParse("0420 1234 5678",out var spaced) && spaced.Lookup=="0420" && spaced.Secret=="12345678" && PairingCode.TryParse("042012345678",out _)
+        && !PairingCode.TryParse("0420-1234-567",out _) && !PairingCode.TryParse("abcd-1234-5678",out _) && PairingCode.New("12345678").Lookup.Length==4,"pairing code display and parse");
+    var (a,b)=await RelayPair();
+    using(var left=new RelayStream(a)) using(var right=new RelayStream(b))
+    {
+        byte[] payload=new byte[Wire.MaxLength]; Random.Shared.NextBytes(payload);
+        var send=left.WriteAsync(payload).AsTask();
+        var sizes=new List<int>(); byte[] got=new byte[payload.Length]; int total=0,message=0; byte[] buffer=new byte[100000];
+        while(total<payload.Length)
+        {
+            var r=await b.ReceiveAsync(buffer,CancellationToken.None); message+=r.Count;
+            Buffer.BlockCopy(buffer,0,got,total,r.Count); total+=r.Count;
+            if(r.EndOfMessage) {sizes.Add(message); message=0;}
+        }
+        await send;
+        Check(got.AsSpan().SequenceEqual(payload) && sizes.Max()<=RelayProtocol.MessageBytes && sizes.Count==256,"16 MB payload round-trips through 64 KiB messages");
+    }
+    var (c,d)=await RelayPair();
+    using(var left=new RelayStream(c)) using(var right=new RelayStream(d))
+    {
+        byte[] bulk=new byte[200000]; Random.Shared.NextBytes(bulk); var w=left.WriteAsync(bulk).AsTask();
+        byte[] small=new byte[1000]; byte[] all=new byte[bulk.Length]; int n=0;
+        while(n<all.Length) n+=await right.ReadAsync(all.AsMemory(n,Math.Min(small.Length,all.Length-n)));
+        await w;
+        Check(all.AsSpan().SequenceEqual(bulk),"relay stream handles reads smaller than a message");
+    }
+    var (e,f)=await RelayPair();
+    using(var server=new RelayStream(e)) using(var client=new RelayStream(f))
+    {
+        using var serverCert=TestCertificate("server"); using var clientCert=TestCertificate("client");
+        using var ssl1=new System.Net.Security.SslStream(server,false,(_,cert,_,_)=>cert!=null);
+        using var ssl2=new System.Net.Security.SslStream(client,false,(_,cert,_,_)=>cert!=null);
+        var serverAuth=ssl1.AuthenticateAsServerAsync(new System.Net.Security.SslServerAuthenticationOptions{ServerCertificate=serverCert,ClientCertificateRequired=true,EnabledSslProtocols=System.Security.Authentication.SslProtocols.Tls12|System.Security.Authentication.SslProtocols.Tls13});
+        var clientAuth=ssl2.AuthenticateAsClientAsync(new System.Net.Security.SslClientAuthenticationOptions{TargetHost="hearthlink",ClientCertificates=new System.Security.Cryptography.X509Certificates.X509CertificateCollection{clientCert},EnabledSslProtocols=System.Security.Authentication.SslProtocols.Tls12|System.Security.Authentication.SslProtocols.Tls13});
+        await Task.WhenAll(serverAuth,clientAuth);
+        await Wire.Write(ssl2,new("hello",Text:"through relay")); var packet=await Wire.Read(ssl1);
+        Check(packet.Text=="through relay" && ssl1.RemoteCertificate!=null && ssl2.RemoteCertificate!=null,"relay stream carries mutual TLS");
+    }
+    var (g,h)=await RelayPair();
+    using(var closing=new RelayStream(g)) using(var closed=new RelayStream(h))
+    {
+        closing.Dispose(); Check(await closed.ReadAsync(new byte[16])==0,"closed relay stream reads zero");
+    }
+    var (i,j)=await RelayPair();
+    using(var reader=new RelayStream(j))
+    {
+        await i.SendAsync(new byte[]{65},System.Net.WebSockets.WebSocketMessageType.Text,true,CancellationToken.None);
+        bool textRejected=false; try {await reader.ReadExactlyAsync(new byte[16]);} catch(InvalidDataException) {textRejected=true;}
+        Check(textRejected,"relay stream rejects text frames");
+    }
+}
+static async Task<(System.Net.WebSockets.WebSocket,System.Net.WebSockets.WebSocket)> RelayPair()
+{
+    var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0); listener.Start();
+    var accept=listener.AcceptTcpClientAsync(); var client=new System.Net.Sockets.TcpClient(); await client.ConnectAsync(System.Net.IPAddress.Loopback,((System.Net.IPEndPoint)listener.LocalEndpoint).Port);
+    var server=await accept; listener.Stop();
+    return (System.Net.WebSockets.WebSocket.CreateFromStream(server.GetStream(),true,null,TimeSpan.FromSeconds(30)),System.Net.WebSockets.WebSocket.CreateFromStream(client.GetStream(),false,null,TimeSpan.FromSeconds(30)));
+}
+static System.Security.Cryptography.X509Certificates.X509Certificate2 TestCertificate(string name)
+{
+    using var rsa=System.Security.Cryptography.RSA.Create(2048);
+    var request=new System.Security.Cryptography.X509Certificates.CertificateRequest("CN="+name,rsa,System.Security.Cryptography.HashAlgorithmName.SHA256,System.Security.Cryptography.RSASignaturePadding.Pkcs1);
+    using var ephemeral=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),DateTimeOffset.UtcNow.AddDays(1));
+    return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ephemeral.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx),null,System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.UserKeySet);
+}
 await UpdateChecks.Run(Check);
 Console.WriteLine($"{passed} checks passed.");
 void CheckQuiet(bool value) {if(!value) throw new Exception("Fixture enqueue failed");}
