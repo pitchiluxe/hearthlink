@@ -158,13 +158,14 @@ export class HostRoom extends DurableObject<Env> {
     const pairLookup = url.searchParams.get("pair");
     const caller = await authenticate(ws, "/v1/connect");
     if (caller === null) return;
-    const presence = this.livePresence();
-    if (presence === null || (pairLookup !== null && !this.hasLookup(pairLookup))) {
-      return ws.close(4404, "host offline");
-    }
+    // For `to`, the allow list is checked first so a non-allowed caller cannot learn whether the host is online.
     if (to !== null) {
       const allowed = this.ctx.storage.kv.get<string[]>("allow") ?? [];
       if (!allowed.includes(caller)) return ws.close(4403, "not allowed");
+    }
+    const presence = this.livePresence();
+    if (presence === null || (pairLookup !== null && !this.hasLookup(pairLookup))) {
+      return ws.close(4404, "host offline");
     }
     const session = toHex(crypto.getRandomValues(new Uint8Array(16)));
     const onEarlyMessage = () => this.dropPending(session, 4400, "wait for ready");

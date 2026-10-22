@@ -88,9 +88,24 @@ describe("session", () => {
   });
 
   it("offline host", async () => {
-    const hostFp = await fingerprintOfPem(certPem);
+    const cfp = await controllerFp();
+    const { hostFp, presence } = await hostOnline([cfp]);
+    presence.close();
+    await settle();
     const controller = await openAuthed(`/v1/connect?to=${hostFp}`, otherKeyPem, otherCertPem);
     expect((await closedWith(controller)).code).toBe(4404);
+  });
+
+  it("stranger gets 4403 whether the host is offline or online", async () => {
+    const { hostFp, presence } = await hostOnline(["E".repeat(64)]);
+    const online = await openAuthed(`/v1/connect?to=${hostFp}`, otherKeyPem, otherCertPem);
+    expect((await closedWith(online)).code).toBe(4403);
+    presence.close();
+    await settle();
+    const offline = await openAuthed(`/v1/connect?to=${hostFp}`, otherKeyPem, otherCertPem);
+    expect((await closedWith(offline)).code).toBe(4403);
+    const never = await openAuthed(`/v1/connect?to=${"9".repeat(64)}`, otherKeyPem, otherCertPem);
+    expect((await closedWith(never)).code).toBe(4403);
   });
 
   it("host never accepts", async () => {
