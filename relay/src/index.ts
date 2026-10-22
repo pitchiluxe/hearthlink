@@ -11,7 +11,7 @@ export default {
         return new Response("expected websocket", { status: 426 });
       }
       const id = url.searchParams.get("id");
-      if (!id) return new Response("missing id", { status: 400 });
+      if (!id || !/^[0-9A-F]{64}$/.test(id)) return new Response("bad id", { status: 400 });
       return env.HOSTS.get(env.HOSTS.idFromName(id)).fetch(request);
     }
     return new Response("not found", { status: 404 });

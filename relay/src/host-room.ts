@@ -6,7 +6,8 @@ const ENDPOINT = "/v1/presence";
 const AUTH_TIMEOUT_MS = 10_000;
 const STALE_MS = 60_000;
 const PAIRING_WINDOW_MS = 120_000;
-const MAX_LOOKUP_LENGTH = 32;
+const LOOKUP_PATTERN = /^[0-9]{4}$/;
+const CLOSE_BAD_FRAME = 4400;
 const MAX_ALLOWED = 1000;
 
 /** Per-socket state kept across hibernation with serializeAttachment. */
@@ -60,12 +61,12 @@ export class HostRoom extends DurableObject<Env> {
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
     const state = ws.deserializeAttachment() as Attachment | null;
     if (!state) return ws.close(4401, "unauthorized");
-    if (typeof data !== "string") return ws.close(state.authedAt === null ? 4401 : 1003, "text only");
+    if (typeof data !== "string") return ws.close(state.authedAt === null ? 4401 : CLOSE_BAD_FRAME, "text only");
     let msg: any;
     try {
       msg = JSON.parse(data);
     } catch {
-      return ws.close(state.authedAt === null ? 4401 : 1007, "bad json");
+      return ws.close(state.authedAt === null ? 4401 : CLOSE_BAD_FRAME, "bad json");
     }
     if (state.authedAt === null) return this.handleAuth(ws, state, msg);
     switch (msg?.t) {
@@ -112,10 +113,13 @@ export class HostRoom extends DurableObject<Env> {
   }
 
   private async scheduleAuthAlarm(): Promise<void> {
+    const now = Date.now();
     let next: number | null = null;
     for (const ws of this.ctx.getWebSockets()) {
+      if (ws.readyState !== WebSocket.READY_STATE_OPEN) continue;
       const state = ws.deserializeAttachment() as Attachment | null;
-      if (state && state.authedAt === null && (next === null || state.deadline < next)) next = state.deadline;
+      if (!state || state.authedAt !== null || state.deadline <= now) continue;
+      if (next === null || state.deadline < next) next = state.deadline;
     }
     if (next !== null) await this.ctx.storage.setAlarm(next);
   }
@@ -152,7 +156,10 @@ export class HostRoom extends DurableObject<Env> {
 
   private async handlePairing(ws: WebSocket, state: Attachment, msg: any): Promise<void> {
     const lookup = msg.lookup;
-    if (typeof lookup !== "string" || lookup.length === 0 || lookup.length > MAX_LOOKUP_LENGTH) return;
+    if (typeof lookup !== "string" || !LOOKUP_PATTERN.test(lookup)) {
+      ws.send(JSON.stringify({ t: "pairing-taken" }));
+      return;
+    }
     const index = this.env.INDEX.get(this.env.INDEX.idFromName("index"));
     const previous = this.ctx.storage.kv.get<PairingState>("pairing");
     const until = Date.now() + PAIRING_WINDOW_MS;
