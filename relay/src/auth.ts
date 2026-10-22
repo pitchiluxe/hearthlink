@@ -106,7 +106,7 @@ export function authenticate(ws: WebSocket, endpoint: string): Promise<string | 
       clearTimeout(timer);
       ws.removeEventListener("message", onMessage);
       ws.removeEventListener("close", onClose);
-      if (id === null) {
+      if (id === null && code !== undefined) {
         try {
           ws.close(code, reason);
         } catch {
@@ -135,6 +135,10 @@ export function authenticate(ws: WebSocket, endpoint: string): Promise<string | 
     const timer = setTimeout(() => finish(null, 4408, "auth timeout"), AUTH_TIMEOUT_MS);
     ws.addEventListener("message", onMessage);
     ws.addEventListener("close", onClose);
-    ws.send(message);
+    try {
+      ws.send(message);
+    } catch {
+      finish(null); // socket already closed: clear timer and listeners, nothing to close
+    }
   });
 }
