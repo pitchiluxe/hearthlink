@@ -3,6 +3,7 @@ namespace HearthLink.Core;
 public sealed class RelayStream(WebSocket socket) : Stream
 {
     int messageBytes;
+    bool closed;
     public override bool CanRead => true;
     public override bool CanWrite => true;
     public override bool CanSeek => false;
@@ -16,11 +17,13 @@ public sealed class RelayStream(WebSocket socket) : Stream
     public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
     {
-        if(buffer.IsEmpty) return 0;
+        if(buffer.IsEmpty || closed) return 0;
         while(true)
         {
-            ValueWebSocketReceiveResult result=await socket.ReceiveAsync(buffer,token).ConfigureAwait(false);
-            if(result.MessageType==WebSocketMessageType.Close) return 0;
+            ValueWebSocketReceiveResult result;
+            try { result=await socket.ReceiveAsync(buffer,token).ConfigureAwait(false); }
+            catch(WebSocketException ex) when(ex.WebSocketErrorCode==WebSocketError.ConnectionClosedPrematurely || socket.State is WebSocketState.Aborted or WebSocketState.Closed) { closed=true; return 0; }
+            if(result.MessageType==WebSocketMessageType.Close) { closed=true; return 0; }
             if(result.MessageType!=WebSocketMessageType.Binary) throw new InvalidDataException("Relay tunnel carries binary messages only.");
             messageBytes+=result.Count;
             if(messageBytes>RelayProtocol.MessageBytes) throw new InvalidDataException("Relay message too large.");

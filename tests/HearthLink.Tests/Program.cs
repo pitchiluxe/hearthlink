@@ -133,12 +133,39 @@ Check(FilePolicy.ValidName("Project report.pdf"),"ordinary file name accepted");
         bool textRejected=false; try {await reader.ReadExactlyAsync(new byte[16]);} catch(InvalidDataException) {textRejected=true;}
         Check(textRejected,"relay stream rejects text frames");
     }
+    System.Net.Sockets.TcpClient? dropped=null; var (k,l)=await RelayPair(t=>dropped=t);
+    using(var survivor=new RelayStream(l))
+    {
+        dropped!.Client.LingerState=new System.Net.Sockets.LingerOption(true,0); dropped.Dispose();
+        Check(await survivor.ReadAsync(new byte[16])==0,"abrupt peer disconnect reads zero");
+    }
+    var (m,o)=await RelayPair();
+    using(var closer=new RelayStream(o)) using(var peer=m)
+    {
+        await peer.CloseOutputAsync(System.Net.WebSockets.WebSocketCloseStatus.NormalClosure,null,CancellationToken.None);
+        Check(await closer.ReadAsync(new byte[16])==0 && await closer.ReadAsync(new byte[16])==0,"reads after peer close keep returning zero");
+    }
+    var (q,rr)=await RelayPair();
+    using(var sizeReader=new RelayStream(rr))
+    {
+        await q.SendAsync(new byte[RelayProtocol.MessageBytes+1],System.Net.WebSockets.WebSocketMessageType.Binary,true,CancellationToken.None);
+        bool tooBig=false; try {await sizeReader.ReadExactlyAsync(new byte[100000]);} catch(InvalidDataException) {tooBig=true;}
+        Check(tooBig,"relay stream rejects an oversize message");
+    }
+    var (u,v)=await RelayPair();
+    using(var splitReader=new RelayStream(v))
+    {
+        await u.SendAsync(new byte[40000],System.Net.WebSockets.WebSocketMessageType.Binary,false,CancellationToken.None);
+        await u.SendAsync(new byte[30000],System.Net.WebSockets.WebSocketMessageType.Binary,true,CancellationToken.None);
+        bool tooBigSplit=false; try {await splitReader.ReadExactlyAsync(new byte[40000]); await splitReader.ReadExactlyAsync(new byte[30000]);} catch(InvalidDataException) {tooBigSplit=true;}
+        Check(tooBigSplit,"relay stream rejects an oversize message split across continuation frames");
+    }
 }
-static async Task<(System.Net.WebSockets.WebSocket,System.Net.WebSockets.WebSocket)> RelayPair()
+static async Task<(System.Net.WebSockets.WebSocket,System.Net.WebSockets.WebSocket)> RelayPair(Action<System.Net.Sockets.TcpClient>? serverTcp=null)
 {
     var listener=new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback,0); listener.Start();
     var accept=listener.AcceptTcpClientAsync(); var client=new System.Net.Sockets.TcpClient(); await client.ConnectAsync(System.Net.IPAddress.Loopback,((System.Net.IPEndPoint)listener.LocalEndpoint).Port);
-    var server=await accept; listener.Stop();
+    var server=await accept; listener.Stop(); serverTcp?.Invoke(server);
     return (System.Net.WebSockets.WebSocket.CreateFromStream(server.GetStream(),true,null,TimeSpan.FromSeconds(30)),System.Net.WebSockets.WebSocket.CreateFromStream(client.GetStream(),false,null,TimeSpan.FromSeconds(30)));
 }
 static System.Security.Cryptography.X509Certificates.X509Certificate2 TestCertificate(string name)
