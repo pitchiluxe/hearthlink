@@ -1,5 +1,6 @@
 import { DurableObject } from "cloudflare:workers";
-import { newChallenge, verifyAuth } from "./auth";
+import { authenticate, newChallenge, verifyAuth } from "./auth";
+import { pipe } from "./pipe";
 import type { Env } from "./env";
 
 const ENDPOINT = "/v1/presence";
@@ -9,6 +10,23 @@ const PAIRING_WINDOW_MS = 120_000;
 const LOOKUP_PATTERN = /^[0-9]{4}$/;
 const CLOSE_BAD_FRAME = 4400;
 const MAX_ALLOWED = 1000;
+
+interface Pending {
+  controller: WebSocket;
+  timer: ReturnType<typeof setTimeout>;
+  /** Removes the listeners that watch the waiting controller. */
+  detach: () => void;
+}
+
+const toHex = (bytes: Uint8Array) => Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+
+function closeQuietly(ws: WebSocket, code: number, reason: string): void {
+  try {
+    ws.close(code, reason);
+  } catch {
+    /* already closed */
+  }
+}
 
 /** Per-socket state kept across hibernation with serializeAttachment. */
 interface Attachment {
@@ -36,9 +54,24 @@ export class HostRoom extends DurableObject<Env> {
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
+  /** Controllers waiting for the host to open its data socket, by session id. Lives while those sockets do. */
+  private pending = new Map<string, Pending>();
+
+  /** How long a controller waits for the host to accept. Instance field so tests can shorten it. */
+  acceptTimeoutMs = 15_000;
+
   async fetch(request: Request): Promise<Response> {
     if (request.headers.get("Upgrade") !== "websocket") {
       return new Response("expected websocket", { status: 426 });
+    }
+    const url = new URL(request.url);
+    if (url.pathname === "/v1/connect" || url.pathname === "/v1/accept") {
+      const pair = new WebSocketPair();
+      const [client, server] = Object.values(pair);
+      server.accept();
+      const run = url.pathname === "/v1/connect" ? this.runConnect(server, url) : this.runAccept(server, url);
+      run.catch(() => closeQuietly(server, 1011, "internal error"));
+      return new Response(null, { status: 101, webSocket: client });
     }
     const expected = new URL(request.url).searchParams.get("id") ?? "";
     const pair = new WebSocketPair();
@@ -97,19 +130,92 @@ export class HostRoom extends DurableObject<Env> {
 
   async isOnlineFor(caller: string): Promise<boolean> {
     const allowed = this.ctx.storage.kv.get<string[]>("allow") ?? [];
-    if (!allowed.includes(caller)) return false;
+    return allowed.includes(caller) && this.livePresence() !== null;
+  }
+
+  /** The authenticated presence socket with a fresh heartbeat, if any. */
+  private livePresence(): WebSocket | null {
     const now = Date.now();
-    return this.ctx.getWebSockets().some((ws) => {
-      const state = ws.deserializeAttachment() as Attachment | null;
-      if (!state || state.authedAt === null) return false;
-      const lastPing = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0;
-      return now - Math.max(lastPing, state.authedAt) <= STALE_MS;
-    });
+    return (
+      this.ctx.getWebSockets().find((ws) => {
+        if (ws.readyState !== WebSocket.READY_STATE_OPEN) return false;
+        const state = ws.deserializeAttachment() as Attachment | null;
+        if (!state || state.authedAt === null) return false;
+        const lastPing = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime() ?? 0;
+        return now - Math.max(lastPing, state.authedAt) <= STALE_MS;
+      }) ?? null
+    );
   }
 
   hasLookup(lookup: string): boolean {
     const pairing = this.ctx.storage.kv.get<PairingState>("pairing");
     return !!pairing && pairing.lookup === lookup && pairing.until > Date.now();
+  }
+
+  /** Controller side: authenticate, check access, announce to the host and wait for it to accept. */
+  private async runConnect(ws: WebSocket, url: URL): Promise<void> {
+    const to = url.searchParams.get("to");
+    const pairLookup = url.searchParams.get("pair");
+    const caller = await authenticate(ws, "/v1/connect");
+    if (caller === null) return;
+    const presence = this.livePresence();
+    if (presence === null || (pairLookup !== null && !this.hasLookup(pairLookup))) {
+      return ws.close(4404, "host offline");
+    }
+    if (to !== null) {
+      const allowed = this.ctx.storage.kv.get<string[]>("allow") ?? [];
+      if (!allowed.includes(caller)) return ws.close(4403, "not allowed");
+    }
+    const session = toHex(crypto.getRandomValues(new Uint8Array(16)));
+    const onEarlyMessage = () => this.dropPending(session, 4400, "wait for ready");
+    const onEnd = () => this.dropPending(session);
+    const detach = () => {
+      ws.removeEventListener("message", onEarlyMessage);
+      ws.removeEventListener("close", onEnd);
+      ws.removeEventListener("error", onEnd);
+    };
+    const timer = setTimeout(() => this.dropPending(session, 4408, "host did not accept"), this.acceptTimeoutMs);
+    this.pending.set(session, { controller: ws, timer, detach });
+    ws.addEventListener("message", onEarlyMessage);
+    ws.addEventListener("close", onEnd);
+    ws.addEventListener("error", onEnd);
+    try {
+      presence.send(JSON.stringify({ t: "incoming", session, from: caller }));
+    } catch {
+      this.dropPending(session, 4404, "host offline");
+    }
+  }
+
+  /** Removes a pending session and, if a code is given, closes its controller. */
+  private dropPending(session: string, code?: number, reason?: string): void {
+    const entry = this.pending.get(session);
+    if (!entry) return;
+    this.pending.delete(session);
+    clearTimeout(entry.timer);
+    entry.detach();
+    if (code !== undefined) closeQuietly(entry.controller, code, reason ?? "");
+  }
+
+  /** Host side: authenticate, claim the waiting session and pipe it to its controller. */
+  private async runAccept(ws: WebSocket, url: URL): Promise<void> {
+    const host = url.searchParams.get("host") ?? "";
+    const session = url.searchParams.get("session") ?? "";
+    const caller = await authenticate(ws, "/v1/accept");
+    if (caller === null) return;
+    if (caller !== host) return ws.close(4401, "unauthorized");
+    const entry = this.pending.get(session);
+    if (!entry) return ws.close(4404, "unknown session");
+    // Claim synchronously so a session is consumed by exactly one accept.
+    this.pending.delete(session);
+    clearTimeout(entry.timer);
+    entry.detach();
+    if (entry.controller.readyState !== WebSocket.READY_STATE_OPEN) return ws.close(4404, "controller gone");
+    try {
+      entry.controller.send(JSON.stringify({ t: "ready" }));
+    } catch {
+      return ws.close(4404, "controller gone");
+    }
+    pipe(entry.controller, ws);
   }
 
   private async scheduleAuthAlarm(): Promise<void> {

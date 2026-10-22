@@ -116,7 +116,8 @@ export function authenticate(ws: WebSocket, endpoint: string): Promise<string | 
       resolve(id);
     };
     const onClose = () => finish(null);
-    const onMessage = async (ev: MessageEvent) => {
+    const onMessage = (ev: MessageEvent) => void handleMessage(ev);
+    const handleMessage = async (ev: MessageEvent) => {
       try {
         if (typeof ev.data !== "string") return finish(null, 4401, "unauthorized");
         const msg = JSON.parse(ev.data);
