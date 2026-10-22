@@ -8,3 +8,7 @@ artifacts/
 .env*
 .playwright-mcp/
 .serena/
+
+# Cloudflare relay
+relay/node_modules/
+relay/.wrangler/
