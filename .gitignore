@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+.build-home/
+artifacts/
+*.user
+.vercel/
+**/.vercel/
+.env*
+.playwright-mcp/
+.serena/
