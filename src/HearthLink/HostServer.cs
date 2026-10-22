@@ -58,7 +58,9 @@ public sealed class HostServer : IDisposable
                 var request=await connection.Read(initial.Token);
                 if(request.Kind=="pair")
                 {
-                    bool accepted=await ui.OnUi(()=>ui.PairController(fingerprint,request.Name??"Controller",request.Code??""));
+                    // Attempts are counted per source address; a fresh TLS certificate costs an attacker nothing, an address does.
+                    string peer=(tcp.Client.RemoteEndPoint as IPEndPoint)?.Address.MapToIPv4().ToString()??"";
+                    bool accepted=await ui.OnUi(()=>ui.PairController(fingerprint,request.Name??"",request.Code??"",peer));
                     await connection.Send(new(accepted?"paired":"denied",Name:identity.Config.Name),initial.Token);
                     return;
                 }
@@ -74,9 +76,11 @@ public sealed class HostServer : IDisposable
                 try
                 {
                     initial.CancelAfter(Timeout.InfiniteTimeSpan);
+                    // Access mode leads, before any peer-supplied text.
+                    string mode=request.Control?"VIEW AND CONTROL":"VIEW ONLY";
                     bool approved=await ui.OnUi(()=>MessageBox.Show(ui,
-                        $"Allow {identity.Config.Controllers.Entries[fingerprint]} to {(request.Control?"VIEW AND CONTROL":"VIEW")} your desktop?\n\nController: {fingerprint}\n\nAll visible desktop contents will be shared.",
-                        "HearthLink • incoming session",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)==DialogResult.Yes);
+                        $"{mode} access requested.\n\nController name: {PeerName.Clean(identity.Config.Controllers.Entries[fingerprint])}\nFingerprint: {fingerprint}\n\nAllow? All visible desktop contents will be shared.",
+                        $"HearthLink • {mode} request",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)==DialogResult.Yes);
                     if(!approved) { await connection.Send(new("denied",Text:"The person at the host declined."),lifetime.Token); return; }
                     using var stop=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
                     active=stop;

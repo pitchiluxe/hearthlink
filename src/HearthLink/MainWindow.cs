@@ -171,17 +171,17 @@ public sealed class MainWindow : Form
         try { server=new(identity,this); server.Start(); hostStatus.Text="Host ready • attended approval required • TCP 45831"; }
         catch(Exception e) { hostStatus.Text="Host unavailable: "+e.Message; server?.Dispose(); server=null; }
     }
-    public bool PairController(string fingerprint,string name,string code)
+    public bool PairController(string fingerprint,string name,string code,string peer)
     {
-        if(name.Length>64 || !pairing.Consume(code,DateTimeOffset.UtcNow)) { identity.Audit(fingerprint,"pair-rejected"); return false; }
+        if(!PeerName.Valid(name) || !pairing.Consume(code,DateTimeOffset.UtcNow,peer)) { identity.Audit(fingerprint,"pair-rejected"); return false; }
         codeLabel.Text="Code used • open a new pairing window";
-        if(MessageBox.Show(this,$"Trust controller {name}?\n\nCompare this fingerprint with the controller’s own identity:\n{fingerprint}\n\nIt will still need approval for each session.","HearthLink pairing",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return false;
+        if(MessageBox.Show(this,$"Trust a new controller?\n\nController name: {name}\nCompare this fingerprint with the controller’s own identity:\n{fingerprint}\n\nIt will still need approval for each session.","HearthLink pairing",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return false;
         identity.Config.Controllers.Add(fingerprint,name); identity.Save(); identity.Audit(fingerprint,"paired"); PopulateControllers(); return true;
     }
-    void PopulateControllers() { controllers.Items.Clear(); foreach(var entry in identity.Config.Controllers.Entries) controllers.Items.Add(new ControllerItem(entry.Value,entry.Key)); emptyControllers.Visible=controllers.Items.Count==0; controllers.Visible=controllers.Items.Count>0; }
+    void PopulateControllers() { controllers.Items.Clear(); foreach(var entry in identity.Config.Controllers.Entries) controllers.Items.Add(new ControllerItem(PeerName.Clean(entry.Value),entry.Key)); emptyControllers.Visible=controllers.Items.Count==0; controllers.Visible=controllers.Items.Count>0; }
     void PopulateHosts()
     {
-        hosts.Items.Clear(); foreach(var host in identity.Config.Hosts) hosts.Items.Add(new ListViewItem([host.Name,host.Address,"Not checked",host.LastSeen?.ToLocalTime().ToString("g")??"Never"]));
+        hosts.Items.Clear(); foreach(var host in identity.Config.Hosts) hosts.Items.Add(new ListViewItem([PeerName.Clean(host.Name),host.Address,"Not checked",host.LastSeen?.ToLocalTime().ToString("g")??"Never"]));
         emptyDevices.Visible=hosts.Items.Count==0; hosts.Visible=hosts.Items.Count>0;
         deviceCount.Text=hosts.Items.Count==1?"1 approved computer":$"{hosts.Items.Count} approved computers";
     }
@@ -190,7 +190,8 @@ public sealed class MainWindow : Form
         if(!identity.Config.Controller) throw new InvalidOperationException("Enable controller first.");
         string target=address.Text.Trim(); if(target.Length==0) throw new InvalidOperationException("Enter the host’s hostname or IP address.");
         identity.Config.LastTarget=target; identity.Save();
-        int existing=identity.Config.Hosts.FindIndex(p=>p.Address.Equals(target,StringComparison.OrdinalIgnoreCase) || p.Name.Equals(target,StringComparison.OrdinalIgnoreCase));
+        // Match only the address the user typed; host names come from the remote PC and must never select a saved identity.
+        int existing=identity.Config.Hosts.FindIndex(p=>p.Address.Equals(target,StringComparison.OrdinalIgnoreCase));
         if(existing>=0)
         {
             foreach(ListViewItem item in hosts.Items) item.Selected=false;
@@ -207,11 +208,12 @@ public sealed class MainWindow : Form
         });
         string? code=Prompt("Enter the one-time code shown on the remote PC"); if(code==null) {connectionProgress.Text="Pairing cancelled • computer name saved"; return;}
         connectionProgress.Text="Waiting for pairing approval on "+target;
-        await connection.Send(new("pair",Name:identity.Config.Name,Code:code));
+        await connection.Send(new("pair",Name:PeerName.Clean(identity.Config.Name) is {Length:>0} own?own:"Controller",Code:code));
         using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
         var reply=await connection.Read(timeout.Token);
         if(reply.Kind!="paired") throw new InvalidOperationException("Pairing rejected. Open a new pairing window on the host, check the code, and approve the request there.");
-        identity.Config.Hosts.Add(new(reply.Name??target,target,fingerprint!,DateTimeOffset.UtcNow)); identity.Save(); PopulateHosts();
+        string hostName=PeerName.Clean(reply.Name); if(hostName.Length==0) hostName=target;
+        identity.Config.Hosts.Add(new(hostName,target,fingerprint!,DateTimeOffset.UtcNow)); identity.Save(); PopulateHosts();
         hosts.Items[^1].Selected=true; hosts.Items[^1].EnsureVisible();
         connectionProgress.Text="Paired • requesting session approval"; await ConnectHost();
     }
@@ -233,7 +235,7 @@ public sealed class MainWindow : Form
             if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to version 0.2.1 or later for faster streaming. Existing pairing is preserved.");
             connectionProgress.Text="Connected to "+host.Name;
             identity.Audit(host.Fingerprint,"outbound-connected");
-            new Viewer(connection,host.Name,control.Checked,reply.Monitors??["Display 1"]).Show(this); connection=null;
+            new Viewer(connection,PeerName.Clean(host.Name),control.Checked,reply.Monitors??["Display 1"]).Show(this); connection=null;
         }
         finally { connection?.Dispose(); }
     }
