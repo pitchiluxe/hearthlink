@@ -59,7 +59,8 @@ public sealed class HostServer : IDisposable
                 if(request.Kind=="pair")
                 {
                     // Attempts are counted per source address; a fresh TLS certificate costs an attacker nothing, an address does.
-                    string peer=(tcp.Client.RemoteEndPoint as IPEndPoint)?.Address.MapToIPv4().ToString()??"";
+                    var remote=(tcp.Client.RemoteEndPoint as IPEndPoint)?.Address;
+                    string peer=(remote is {IsIPv4MappedToIPv6:true}?remote.MapToIPv4():remote)?.ToString()??"";
                     bool accepted=await ui.OnUi(()=>ui.PairController(fingerprint,request.Name??"",request.Code??"",peer));
                     await connection.Send(new(accepted?"paired":"denied",Name:identity.Config.Name),initial.Token);
                     return;
