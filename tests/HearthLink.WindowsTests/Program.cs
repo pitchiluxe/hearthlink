@@ -104,6 +104,17 @@ try
             await c.Send(new("probe")); Check((await c.Read()).Kind=="online","HostServer serves a session over an in-memory relay stream");
             c.Dispose(); await relayed.WaitAsync(TimeSpan.FromSeconds(10));
         }
+        {
+            var (dropClient,dropServer)=await RelayPair();
+            var dropped=fixture.Server.ServeRelay(dropServer,controller.Fingerprint);
+            dropClient.Dispose();
+            bool completed=true; try { await dropped.WaitAsync(TimeSpan.FromSeconds(10)); } catch { completed=false; }
+            var (aliveClient,aliveServer)=await RelayPair();
+            var again=fixture.Server.ServeRelay(aliveServer,controller.Fingerprint);
+            using var c=await Connection.Secure(aliveClient,controller,host.Fingerprint,null,CancellationToken.None);
+            await c.Send(new("probe")); Check(completed && (await c.Read()).Kind=="online","ServeRelay survives a peer dropping mid-handshake and releases its slot");
+            c.Dispose(); await again.WaitAsync(TimeSpan.FromSeconds(10));
+        }
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
             await c.Send(new("session",Control:true,Value:2));

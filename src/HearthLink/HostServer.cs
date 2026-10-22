@@ -34,9 +34,10 @@ public sealed class HostServer : IDisposable
                     {
                         // Attempts are counted per source address; a fresh TLS certificate costs an attacker nothing, an address does.
                         string peer; try { var remote=(tcp.Client.RemoteEndPoint as IPEndPoint)?.Address; peer=(remote is {IsIPv4MappedToIPv6:true}?remote.MapToIPv4():remote)?.ToString()??""; } catch(Exception e) when(e is SocketException or ObjectDisposedException) { peer=""; }
-                                await Serve(new NetworkStream(tcp.Client,true),peer);
+                        tcp.NoDelay=true;
+                        await Serve(new NetworkStream(tcp.Client,true),peer);
                     }
-                    catch(Exception e) when(e is SocketException or ObjectDisposedException or InvalidOperationException) { }
+                    catch(Exception e) when(e is SocketException or ObjectDisposedException or InvalidOperationException or IOException) { }
                     finally { tcp.Dispose(); clients.Release(); }
                 });
             }
@@ -154,7 +155,7 @@ public sealed class HostServer : IDisposable
                 }
                 finally { session.Release(); }
             }
-            catch(Exception e) when(e is IOException or AuthenticationException or OperationCanceledException or SocketException or ObjectDisposedException or InvalidDataException or System.Text.Json.JsonException or InvalidOperationException or TimeoutException)
+            catch(Exception e) when(e is IOException or AuthenticationException or OperationCanceledException or SocketException or ObjectDisposedException or InvalidDataException or System.Text.Json.JsonException or InvalidOperationException or System.Net.WebSockets.WebSocketException or TimeoutException)
             {
                 // Do not log wire payloads or exception text containing user data.
             }
