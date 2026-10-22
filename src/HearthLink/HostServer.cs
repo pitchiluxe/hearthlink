@@ -28,39 +28,50 @@ public sealed class HostServer : IDisposable
             {
                 var tcp=await listener.AcceptTcpClientAsync(lifetime.Token);
                 if(!clients.Wait(0)) { tcp.Dispose(); continue; }
-                _=Task.Run(async()=> { try { await Serve(tcp); } finally { clients.Release(); } });
+                _=Task.Run(async()=>
+                {
+                    try
+                    {
+                        // Attempts are counted per source address; a fresh TLS certificate costs an attacker nothing, an address does.
+                        string peer; try { var remote=(tcp.Client.RemoteEndPoint as IPEndPoint)?.Address; peer=(remote is {IsIPv4MappedToIPv6:true}?remote.MapToIPv4():remote)?.ToString()??""; } catch(Exception e) when(e is SocketException or ObjectDisposedException) { peer=""; }
+                                await Serve(new NetworkStream(tcp.Client,true),peer);
+                    }
+                    catch(Exception e) when(e is SocketException or ObjectDisposedException or InvalidOperationException) { }
+                    finally { tcp.Dispose(); clients.Release(); }
+                });
             }
         }
         catch(OperationCanceledException) { }
         catch(ObjectDisposedException) { }
         catch(SocketException) when(lifetime.IsCancellationRequested) { }
     }
-    async Task Serve(TcpClient tcp)
+    public async Task ServeRelay(Stream transport,string fromFingerprint)
     {
-        using(tcp)
-        using(var ssl=new SslStream(tcp.GetStream(),false,(_,cert,_,_)=>cert!=null))
+        if(!clients.Wait(0)) { transport.Dispose(); return; }
+        try { await Serve(transport,"relay:"+fromFingerprint); } finally { clients.Release(); }
+    }
+    public async Task Serve(Stream transport,string peer)
+    {
+        using(transport)
+        using(var ssl=new SslStream(transport,false,(_,cert,_,_)=>cert!=null))
         using(var initial=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token))
         {
             initial.CancelAfter(TimeSpan.FromMinutes(2));
             string fingerprint="";
             try
             {
-                tcp.NoDelay=true;
                 await ssl.AuthenticateAsServerAsync(new SslServerAuthenticationOptions {
                     ServerCertificate=identity.Certificate,ClientCertificateRequired=true,
                     EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13,CertificateRevocationCheckMode=X509RevocationMode.NoCheck
                 },initial.Token);
                 if(ssl.RemoteCertificate==null) return;
                 fingerprint=IdentityStore.FingerprintOf(ssl.RemoteCertificate);
-                using var connection=new Connection(tcp,ssl);
+                using var connection=new Connection(transport,ssl);
                 // Allow time for the human fingerprint/code comparison after TLS.
                 initial.CancelAfter(TimeSpan.FromMinutes(2));
                 var request=await connection.Read(initial.Token);
                 if(request.Kind=="pair")
                 {
-                    // Attempts are counted per source address; a fresh TLS certificate costs an attacker nothing, an address does.
-                    var remote=(tcp.Client.RemoteEndPoint as IPEndPoint)?.Address;
-                    string peer=(remote is {IsIPv4MappedToIPv6:true}?remote.MapToIPv4():remote)?.ToString()??"";
                     bool accepted=await ui.OnUi(()=>ui.PairController(fingerprint,request.Name??"",request.Code??"",peer));
                     await connection.Send(new(accepted?"paired":"denied",Name:identity.Config.Name),initial.Token);
                     return;
@@ -72,7 +83,7 @@ public sealed class HostServer : IDisposable
                 }
                 if(request.Kind=="probe") { await connection.Send(new("online",Name:identity.Config.Name),initial.Token); return; }
                 if(request.Kind!="session") return;
-                if(request.Value!=Wire.ProtocolVersion) {await connection.Send(new("denied",Text:"Update HearthLink on BOTH PCs to version 0.2.0 or later for faster streaming. Existing pairing is preserved."),initial.Token); return;}
+                if(request.Value!=Wire.ProtocolVersion) {await connection.Send(new("denied",Text:"Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved."),initial.Token); return;}
                 if(!session.Wait(0)) { await connection.Send(new("denied",Text:"Host already has an active session."),initial.Token); return; }
                 try
                 {

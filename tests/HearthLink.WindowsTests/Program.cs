@@ -3,9 +3,22 @@ using HearthLink.Core;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
+using System.Net.WebSockets;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 
+static async Task<(RelayStream Client,RelayStream Server)> RelayPair()
+{
+    var tcpListener=new TcpListener(IPAddress.Loopback,0); tcpListener.Start();
+    try
+    {
+        var client=new TcpClient(); var accepting=tcpListener.AcceptTcpClientAsync();
+        await client.ConnectAsync(IPAddress.Loopback,((IPEndPoint)tcpListener.LocalEndpoint).Port);
+        var server=await accepting;
+        return (new RelayStream(WebSocket.CreateFromStream(client.GetStream(),false,null,TimeSpan.FromSeconds(30))),new RelayStream(WebSocket.CreateFromStream(server.GetStream(),true,null,TimeSpan.FromSeconds(30))));
+    }
+    finally { tcpListener.Stop(); }
+}
 var root=Path.Combine(Path.GetTempPath(),"HearthLink-tests-"+Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
 int passed=0;
@@ -83,6 +96,18 @@ try
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
             await c.Send(new("probe")); Check((await c.Read()).Kind=="online","actual HostServer accepts trusted status probe");
+        }
+        {
+            var (clientTransport,serverTransport)=await RelayPair();
+            var relayed=fixture.Server.ServeRelay(serverTransport,controller.Fingerprint);
+            using var c=await Connection.Secure(clientTransport,controller,host.Fingerprint,null,CancellationToken.None);
+            await c.Send(new("probe")); Check((await c.Read()).Kind=="online","HostServer serves a session over an in-memory relay stream");
+            c.Dispose(); await relayed.WaitAsync(TimeSpan.FromSeconds(10));
+        }
+        using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
+        {
+            await c.Send(new("session",Control:true,Value:2));
+            var reply=await c.Read(); Check(reply.Kind=="denied" && (reply.Text??"").Contains("0.3.0"),"protocol 2 session gets update message");
         }
         using(var c=await Connection.Connect("127.0.0.1",stranger,host.Fingerprint))
         {

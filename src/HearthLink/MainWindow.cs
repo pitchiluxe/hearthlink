@@ -232,7 +232,7 @@ public sealed class MainWindow : Form
             using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
             var reply=await connection.Read(timeout.Token);
             if(reply.Kind!="ready") throw new InvalidOperationException(reply.Text??"Host rejected the session.");
-            if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to version 0.2.1 or later for faster streaming. Existing pairing is preserved.");
+            if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved.");
             connectionProgress.Text="Connected to "+host.Name;
             identity.Audit(host.Fingerprint,"outbound-connected");
             new Viewer(connection,PeerName.Clean(host.Name),control.Checked,reply.Monitors??["Display 1"]).Show(this); connection=null;

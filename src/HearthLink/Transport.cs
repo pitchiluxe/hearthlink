@@ -9,17 +9,17 @@ namespace HearthLink;
 public sealed class Connection : IDisposable
 {
     public const int Port=45831;
-    public readonly TcpClient Tcp;
     public readonly SslStream Stream;
+    readonly Stream transport;
     readonly SemaphoreSlim write=new(1,1);
-    public Connection(TcpClient tcp,SslStream stream) { Tcp=tcp; Stream=stream; }
+    public Connection(Stream transport,SslStream stream) { this.transport=transport; Stream=stream; }
     public async Task Send(Packet packet,CancellationToken token=default)
     {
         await write.WaitAsync(token);
         try { await Wire.Write(Stream,packet,token); } finally { write.Release(); }
     }
     public Task<Packet> Read(CancellationToken token=default)=>Wire.Read(Stream,token);
-    public void Dispose() { Stream.Dispose(); Tcp.Dispose(); }
+    public void Dispose() { Stream.Dispose(); transport.Dispose(); }
     public static async Task<Connection> Connect(string address,IdentityStore identity,string? expected,Func<string,bool>? confirm=null)
     {
         using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(confirm==null?15:120));
@@ -45,18 +45,26 @@ public sealed class Connection : IDisposable
                     throw new IOException($"Cannot connect to {address} on TCP {Port}. {resolved} Network result: {e.SocketErrorCode}. Check the OTHER PC's HearthLink host and its firewall/network profile, or enter its active LAN IPv4 address.",e);
                 }
             }
-            var ssl=new SslStream(tcp.GetStream(),false,(_,cert,_,_)=>
-            {
-                if(cert==null) return false;
-                string actual=IdentityStore.FingerprintOf(cert);
-                return expected!=null ? actual==expected : confirm?.Invoke(actual)==true;
-            });
+            return await Secure(new NetworkStream(tcp.Client,true),identity,expected,confirm,timeout.Token);
+        }
+        catch { tcp.Dispose(); throw; }
+    }
+    public static async Task<Connection> Secure(Stream transport,IdentityStore identity,string? expected,Func<string,bool>? confirm,CancellationToken token)
+    {
+        var ssl=new SslStream(transport,false,(_,cert,_,_)=>
+        {
+            if(cert==null) return false;
+            string actual=IdentityStore.FingerprintOf(cert);
+            return expected!=null ? actual==expected : confirm?.Invoke(actual)==true;
+        });
+        try
+        {
             await ssl.AuthenticateAsClientAsync(new SslClientAuthenticationOptions {
                 TargetHost="HearthLink", EnabledSslProtocols=SslProtocols.Tls12|SslProtocols.Tls13,
                 ClientCertificates=new X509CertificateCollection {identity.Certificate}, CertificateRevocationCheckMode=X509RevocationMode.NoCheck
-            },timeout.Token);
-            return new(tcp,ssl);
+            },token);
+            return new(transport,ssl);
         }
-        catch { tcp.Dispose(); throw; }
+        catch { ssl.Dispose(); transport.Dispose(); throw; }
     }
 }
