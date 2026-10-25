@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 LAN/VPN remote desktop application. **Version 0.2.2 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.3.0 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.3.0 connects paired PCs on any network through the HearthLink relay (`relay/`, a Cloudflare Worker). Both PCs connect outbound, so no firewall rule or router setup is needed; mutual TLS with pinned fingerprints still runs end to end, and the relay cannot read sessions ([trust boundary](docs/ARCHITECTURE.md#relay-trust-boundary)). Pairing uses a 12-digit code and trusts both directions; existing one-way 0.2.x pairings upgrade automatically the next time the two PCs connect. Direct LAN connections are an opt-in fallback. **Update both PCs to 0.3.0**: a 0.2.x PC shows an update message instead of connecting.
 
 Version 0.2.2 hardens pairing: remote computer names are stripped of control and text-direction characters, session approval prompts state the access mode first, wrong pairing codes lock out only the guessing address, and saved hosts are matched only by the address you typed.
 
@@ -16,30 +18,31 @@ The [step-by-step PDF manual](artifacts/manual/HearthLink-0.1.1-User-Manual.pdf)
 
 ## Install on two PCs
 
-1. Copy `artifacts/HearthLink-0.1.1-win-x64-setup.exe` to both PCs. This build is unsigned; Windows can show an unknown-publisher/SmartScreen warning. Verify its SHA-256 against `artifacts/SHA256SUMS.txt` before deciding to run it. No security-tool exclusions are required or recommended.
-2. Run the installer. It installs for the machine and needs administrator approval. On a PC that will receive sessions, select the optional **incoming host connections** firewall task. It permits only this executable's TCP 45831 on Private networks from the local subnet. Leave it unchecked for a controller-only PC.
-3. Launch HearthLink as your normal Windows user. On the remote PC, enable **Allow incoming sessions**. On the controller, enable **Use as a controller**. For both roles, enable both. Give each a recognizable name and save it. Host and controller selection is made in the app after installation.
-4. Keep the host signed in and unlocked. Read its hostname or IPv4 address from Windows network settings. Automatic discovery is not included yet.
-5. On the host, choose **Open pairing for 2 minutes**. On the controller, enter the host's hostname/IP and select **Pair a computer**. Compare all 64 hexadecimal fingerprint digits with the remote PC's identity display. Reject a mismatch.
-6. Enter the host's one-time code on the controller. At the host, compare the requesting controller's fingerprint with the identity shown on that controller, then approve. Codes expire after two minutes, are single-use, and close after five incorrect attempts.
-7. Select the enrolled host on the controller. A real authenticated status probe updates **Online** and last seen. Choose keyboard/mouse control or leave it unchecked for view-only, then **Connect**.
+1. Copy `artifacts/HearthLink-0.3.0-win-x64-setup.exe` to both PCs. This build is unsigned; Windows can show an unknown-publisher/SmartScreen warning. Verify its SHA-256 against `artifacts/SHA256SUMS.txt` before deciding to run it. No security-tool exclusions are required or recommended.
+2. Run the installer. It installs for the machine and needs administrator approval. Leave the optional **direct connections** firewall task unchecked unless you want the LAN fallback; it permits only this executable's TCP 45831 on Private networks from the local subnet.
+3. Launch HearthLink as your normal Windows user. On the remote PC, enable **Allow incoming sessions**; its status should read **Online through relay**. On the controller, enable **Use as a controller**. For both roles, enable both. Give each a recognizable name and save it. **Also accept direct connections on my network** is off by default; turn it on (with the firewall task) only for the LAN fallback.
+4. Keep the host signed in and unlocked.
+5. On the host, choose **Open pairing for 2 minutes**. It shows a 12-digit code such as `1234-5678-9012`. On the controller, type that code into the pair box and select **Pair / connect**. Compare all 64 hexadecimal fingerprint digits with the remote PC's identity display. Reject a mismatch. (A hostname or IPv4 address instead of a code pairs over the LAN, which needs direct connections on the host.)
+6. At the host, compare the requesting PC's fingerprint with the identity shown on that PC, then approve **Trust this PC both ways?**. Codes expire after two minutes, are single-use, and lock out after five incorrect attempts per PC (50 in total).
+7. Select the paired PC on the controller. Status refreshes every 10 seconds: **Online** (through the relay), **Online (network)** (LAN only), **Offline**, **Trust revoked** or **Identity mismatch**. Choose keyboard/mouse control or leave it unchecked for view-only, then **Connect**.
 8. Approve the view/control request at the host. Confirm the viewer shows the host's actual desktop. Open Notepad locally on the host, type from the controller and test clicking/moving its window. Do not use a password field for this test.
 9. Close the viewer or choose **Disconnect**. At the host, **End remote session** also terminates access. The visible host status identifies an active connection.
 
-Pair only when someone can compare both devices' identities. Enrolling a host on the controller and enrolling a controller on the host are separate directions. Pair in the reverse direction to control the first PC from the second.
+Pair only when someone can compare both devices' identities. One pairing trusts both directions: either PC can request a session on the other, and every session still needs approval on the PC being accessed.
 
 ## Normal use and revocation
 
 Use the monitor list to switch displays. The image is fitted to the viewer; mouse coordinates account for letterboxing and display resolution. Full screen toggles from its toolbar. Keyboard focus belongs to the viewer when its screen is clicked. F12 releases focus to the Disconnect button. Windows may intercept local combinations such as Windows keys and Alt+Tab; Ctrl+Alt+Del, secure UAC, locked desktop and sign-in are unsupported. Elevated applications may reject input under Windows UIPI. No attempt is made to bypass those restrictions.
 
-Select a controller on the host and click **Revoke controller** to remove its authorization and terminate the current host session. Disabling incoming sessions or closing the host app stops the listener. **Forget** removes the controller's saved host pin, but does not revoke that controller at the remote PC; revoke there too. After a host identity mismatch, compare its new identity in person before deliberately forgetting and pairing again.
+**Remove PC** (in either list) removes that PC in both roles, ends the current host session and updates the relay's allowed list, so the removed PC no longer sees this one as Online. Remove it on the other PC too. Disabling incoming sessions or closing the host app takes the host offline. After a host identity mismatch, compare its new identity in person before deliberately removing and pairing again.
 
 Network interruptions close the viewer connection. Close the viewer, restore connectivity, refresh status, then connect again and approve at the host. There is no automatic reconnection or unattended access in 0.1.1. Do not rely on it for reboot recovery.
 
 ## Troubleshooting
 
-* **Unavailable:** confirm the host app is running, incoming sessions are enabled, the host is unlocked, and TCP 45831 is reachable. In PowerShell on the controller: `Test-NetConnection HOSTNAME -Port 45831`. Port reachability alone does not verify authentication.
-* **Firewall:** the installer rule applies only to Private networks/local subnet. Domain-joined PCs work at the application protocol level, but a domain-profile firewall or organization policy can block it. Have the administrator create a rule for this exact app, port and approved source subnet on the appropriate profile. Do not open Public profiles or configure router forwarding. VPN subnets may need a similarly explicit administrator-scoped rule.
+* **Offline:** confirm the host app is running with incoming sessions enabled and its status reads **Online through relay**, and that both PCs have internet access. **Relay unreachable • LAN only** on the host means it cannot reach the relay; paired PCs can then connect only over the LAN with direct connections enabled.
+* **LAN fallback (Online (network)):** needs **Also accept direct connections on my network** on the host and TCP 45831 reachable. In PowerShell on the controller: `Test-NetConnection HOSTNAME -Port 45831`. Port reachability alone does not verify authentication.
+* **Firewall (LAN fallback only):** the installer rule applies only to Private networks/local subnet. Domain-joined PCs work at the application protocol level, but a domain-profile firewall or organization policy can block it. Have the administrator create a rule for this exact app, port and approved source subnet on the appropriate profile. Do not open Public profiles or configure router forwarding. VPN subnets may need a similarly explicit administrator-scoped rule.
 * **Host unavailable/address in use:** another host process can own port 45831. Close duplicate copies. One Windows user's host per PC can listen at a time.
 * **Trust revoked:** re-pair only after deliberate approval at the host.
 * **Identity mismatch:** never dismiss by turning off TLS validation. Compare identities and explicitly re-enroll.

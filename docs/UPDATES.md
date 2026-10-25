@@ -23,6 +23,16 @@ The updater and website use the public repository **pitchiluxe/hearthlink**. Pub
 
 The updater rejects missing checksums, mismatched sizes/hashes, external download publishers, HTTPS downgrades, prereleases, and version downgrades. GitHub API rate limits, DNS failures, or unpublished releases show a retryable status.
 
+## Relay deployment
+
+The relay in **relay/** is a Cloudflare Worker named `hearthlink-relay` on the owner's account, served at `wss://hearthlink-relay.erickomari.workers.dev` (`RelayClient.DefaultUrl`). It runs on the Workers free plan; do not enable a paid plan without the owner's decision.
+
+1. In `relay/`, run `npm test`, then `npx wrangler deploy` from a shell logged in with `npx wrangler login`.
+2. Run the Windows checks against it: set `HEARTHLINK_RELAY_URL=wss://hearthlink-relay.erickomari.workers.dev` and run `dotnet run --project tests/HearthLink.WindowsTests -c Release`.
+3. After real use, check Workers requests and Durable Object duration in the Cloudflare dashboard. If projected daily use exceeds half of a free-plan limit, stop and review.
+
+The relay protocol is versioned by its `/v1/` paths. A breaking relay change needs a new path, with the old one kept until installed apps have updated. `HEARTHLINK_RELAY_URL` overrides the relay for one app run (for `wrangler dev` testing) and is never saved.
+
 ## Website deployment
 
 The site is buildless HTML/CSS/JavaScript in **website/**. Deploy that directory to a Vercel project named **hearthlink**, with no framework and no build command. The intended production domain is **hearthlink.vercel.app**; its availability and assignment must be confirmed by Vercel. A local preview is not a production deployment.

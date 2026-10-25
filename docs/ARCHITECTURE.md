@@ -1,6 +1,18 @@
 # HearthLink architecture and engine decision
 
-HearthLink targets Windows 11 Home, Pro, Enterprise and Education on a LAN or private VPN. No rendezvous, relay, public listener configuration, account service or cloud dependency is used.
+HearthLink targets Windows 11 Home, Pro, Enterprise and Education. Since 0.3.0, paired PCs reach each other on any network through the HearthLink relay (`relay/`, a Cloudflare Worker at `wss://hearthlink-relay.erickomari.workers.dev`); a direct LAN connection on TCP 45831 remains an opt-in fallback. No public listener configuration or account service is used.
+
+## Relay trust boundary
+
+Both PCs connect outbound to the relay and authenticate with a signature from their device certificate. The relay pipes bytes between them; the existing mutual TLS with pinned fingerprints runs end to end inside that tunnel.
+
+| Threat | Protection |
+|---|---|
+| Relay operator or attacker who controls the relay | End-to-end mutual TLS with pinned fingerprints inside the tunnel; the relay cannot decrypt, alter or impersonate. Worst case: it blocks or delays connections and sees metadata (which device IDs are online, when, how much data). |
+| Stranger on the internet | Must possess a paired private key. The relay refuses status and connect for devices not on the host's allowed list, so strangers cannot reach the host's TLS handshake outside an open pairing window. |
+| Guessing a pairing code | 8-digit secret sent only inside TLS, two-minute window, 5 tries per peer, 50 total, plus fingerprint approval on both PCs. The 4-digit lookup sent to the relay is not secret. |
+
+The relay stores only per-host allowed lists, presence and open pairing lookups: nothing about screens, input, the secret part of codes, or keys.
 
 ## Research and decision (2026-10-22)
 

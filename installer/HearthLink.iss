@@ -1,4 +1,4 @@
-#define AppVersion "0.2.2"
+#define AppVersion "0.3.0"
 [Setup]
 AppId={{8910C137-DC6A-4A87-BE94-601B77D80391}
 AppName=HearthLink
@@ -6,7 +6,7 @@ AppVersion={#AppVersion}
 DefaultDirName={autopf}\HearthLink
 DefaultGroupName=HearthLink
 OutputDir=..\artifacts
-OutputBaseFilename=HearthLink-0.2.2-win-x64-setup
+OutputBaseFilename=HearthLink-0.3.0-win-x64-setup
 SetupIconFile=..\assets\HearthLink.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -17,7 +17,7 @@ WizardStyle=modern
 UninstallDisplayIcon={app}\HearthLink.exe
 CloseApplications=yes
 [Tasks]
-Name: firewall; Description: "Allow incoming host connections on Private networks (TCP 45831, local subnet only)"; Flags: unchecked
+Name: firewall; Description: "Also allow direct connections on Private networks (TCP 45831, local subnet only) — not needed for normal use"; Flags: unchecked
 [Files]
 Source: "..\artifacts\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
