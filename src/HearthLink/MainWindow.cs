@@ -214,7 +214,7 @@ public sealed class MainWindow : Form
         using var connection=await Connection.Connect(target,identity,null,actual=>
         {
             fingerprint=actual;
-            return OnUi(()=>MessageBox.Show(this,$"Compare ALL digits against the fingerprint shown on the remote PC:\n\n{actual}\n\nDo they match exactly?","Verify host identity",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)==DialogResult.Yes).GetAwaiter().GetResult();
+            return OnUi(()=>MessageBox.Show(this,$"Compare ALL digits against the fingerprint shown on the remote PC:\n\n{actual}\n\nPairing is two-way: each PC will be able to request access to the other. Every session still needs approval on the PC being accessed.\n\nDo they match exactly?","Verify host identity",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)==DialogResult.Yes).GetAwaiter().GetResult();
         });
         string? code=Prompt("Enter the one-time code shown on the remote PC"); if(code==null) {connectionProgress.Text="Pairing cancelled • computer name saved"; return;}
         connectionProgress.Text="Waiting for pairing approval on "+target;
