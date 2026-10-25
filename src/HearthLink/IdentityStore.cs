@@ -15,6 +15,7 @@ public sealed class Settings
     public TrustBook Controllers { get; set; }=new();
     public List<Peer> Hosts { get; set; }=[];
     public string RelayUrl { get; set; }=RelayClient.DefaultUrl;
+    public bool LanListener { get; set; }
 }
 public sealed class IdentityStore
 {
@@ -22,6 +23,9 @@ public sealed class IdentityStore
     public Settings Config { get; }
     public X509Certificate2 Certificate { get; }
     public string Fingerprint => FingerprintOf(Certificate);
+    /// <summary>A relay address for this run only (never saved), e.g. from HEARTHLINK_RELAY_URL.</summary>
+    public string? RelayOverride { get; set; }
+    public string RelayUrl => string.IsNullOrWhiteSpace(RelayOverride) ? Config.RelayUrl : RelayOverride.Trim();
     public static string FingerprintOf(X509Certificate cert) => Convert.ToHexString(SHA256.HashData(cert.GetRawCertData()));
     public IdentityStore(string? folder=null)
     {

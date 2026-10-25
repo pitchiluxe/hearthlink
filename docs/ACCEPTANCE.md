@@ -31,6 +31,24 @@ Do not mark a test passed without actually performing it. Record PC names, Windo
 - [ ] Inspect actual session history metadata. Ensure it contains no screen, clipboard, pairing code, keystroke or private key contents.
 - [ ] Uninstall B. Confirm the app and `HearthLink Host TCP` firewall rule are removed and no service/startup entry was created. Explicitly remove retained per-user data if desired.
 
+## 0.3.0 relay
+
+One-PC items can be checked against `wrangler dev` (set `HEARTHLINK_RELAY_URL=ws://127.0.0.1:8787` before starting the app; the override is not saved). Two-PC items wait for the deployed relay (plan Task 9).
+
+One PC (TECHNOBIZ-ASUS, Windows 11 Home 10.0.26340, build from `relay-phase1`, local `wrangler dev`, 2026-10-25 18:55–19:08):
+- [x] With **Allow incoming sessions** on, the host status shows "Online through relay". Relay stopped: "Relay unreachable • LAN only" within 3 s. Relay restarted: "Online through relay" 0.4 s after it answered again.
+- [x] **Also accept direct connections on my network** is off by default. A TCP connect to 127.0.0.1:45831 is refused while it is off and accepted while it is on; status adds "• LAN TCP 45831". The off state survived a restart.
+- [x] **Open pairing for 2 minutes** shows a 12-digit code (seen `8533-8160-7959`). Relay down with direct connections on: the 8-digit code marked "LAN only". Relay down with direct connections off: "Relay unreachable • turn on direct connections to pair on your network". After 2 minutes the label read "Pairing is closed" and the relay rejected that code ("That computer is offline or the pairing code has expired.").
+- [x] The pair box placeholder reads "Pairing code (1234-5678-9012) or LAN address". `4321 1111-2222` went through the relay (relay's "offline or expired" answer); `no-such-pc.invalid` took the LAN path ("Cannot connect to no-such-pc.invalid on TCP 45831…"). After a restart the box held the LAN text, not a code.
+- [ ] Connect to a paired PC that is offline everywhere: the message reads "Not reachable through the relay or on your network. Check HearthLink is running on {name}." *Not checked: this profile has no paired host. Repeat in Task 9.*
+- [x] Footer reads "Encrypted end to end  •  You approve access  •  Works on any network". Sidebar reads "Any network". Both removal buttons read **Remove PC**.
+
+Two PCs (Task 9):
+- [ ] Pair by 12-digit code through the relay; each PC then lists the other, and the host prompt reads "Trust this PC both ways?".
+- [ ] The device list shows `Online` through the relay, `Online (network)` when only the LAN probe answers, and `Offline`, `Trust revoked` or `Identity mismatch` as appropriate; refresh runs every 10 s.
+- [ ] **Connect** goes through the relay; with the relay unreachable it falls back to the saved LAN address.
+- [ ] **Remove PC** on either side removes the other PC from both lists, and the relay stops showing it as Online to the removed PC.
+
 ## Future release acceptance (not implemented; not passable yet)
 
 - [ ] Discovery displays real untrusted devices separately and grants no access.

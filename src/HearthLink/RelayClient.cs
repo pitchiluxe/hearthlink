@@ -203,7 +203,7 @@ public sealed class RelayPresence(IdentityStore identity,Func<IReadOnlyList<stri
             ClientWebSocket? current=null; int closed=-1; DateTime since=DateTime.UtcNow; bool connected=false;
             try
             {
-                current=await RelayClient.Open(identity.Config.RelayUrl,RelayProtocol.Presence+"?id="+identity.Fingerprint,identity,lifetime.Token);
+                current=await RelayClient.Open(identity.RelayUrl,RelayProtocol.Presence+"?id="+identity.Fingerprint,identity,lifetime.Token);
                 lock(sync) socket=current;
                 if(!await Send(current,AllowMessage())) throw RelayException.For(0);
                 connected=true; failures=0; since=DateTime.UtcNow; Report(Online);
@@ -272,7 +272,7 @@ public sealed class RelayPresence(IdentityStore identity,Func<IReadOnlyList<stri
     {
         try
         {
-            var tunnel=await RelayClient.Open(identity.Config.RelayUrl,$"{RelayProtocol.Accept}?host={identity.Fingerprint}&session={session}",identity,lifetime.Token);
+            var tunnel=await RelayClient.Open(identity.RelayUrl,$"{RelayProtocol.Accept}?host={identity.Fingerprint}&session={session}",identity,lifetime.Token);
             using var stream=new RelayStream(tunnel);
             await incoming(stream,from);
         }

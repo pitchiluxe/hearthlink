@@ -16,8 +16,9 @@ public sealed class HostServer : IDisposable
     readonly SemaphoreSlim clients=new(8,8), session=new(1,1);
     CancellationTokenSource? active;
     public bool HasActiveSession=>active!=null;
+    public bool Listening { get; private set; }
     public HostServer(IdentityStore store,MainWindow window,IPAddress? bindAddress=null) { identity=store; ui=window; listener=new(bindAddress??IPAddress.Any,Connection.Port); }
-    public void Start() { listener.Start(8); _=Accept(); }
+    public void Start() { listener.Start(8); Listening=true; _=Accept(); }
     public void Disconnect() => active?.Cancel();
     public void Dispose() { lifetime.Cancel(); active?.Cancel(); listener.Stop(); }
     async Task Accept()

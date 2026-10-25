@@ -43,4 +43,5 @@ public sealed class TrustBook
     public bool Contains(string fingerprint) { lock(sync) return Entries.ContainsKey(fingerprint); }
     public void Add(string fingerprint,string name) { lock(sync) Entries[fingerprint]=name; }
     public void Remove(string fingerprint) { lock(sync) Entries.Remove(fingerprint); }
+    public string[] Fingerprints() { lock(sync) return [..Entries.Keys]; }
 }
