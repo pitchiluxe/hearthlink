@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { AttemptLimiter, PAIR_ATTEMPTS, PAIR_WINDOW_MS } from "./limits";
 
 interface Entry {
   host: string;
@@ -7,6 +8,13 @@ interface Entry {
 
 /** Maps short pairing lookup codes to the host that registered them. A single global instance. */
 export class PairingIndex extends DurableObject {
+  private readonly pairAttempts = new AttemptLimiter(PAIR_ATTEMPTS, PAIR_WINDOW_MS);
+
+  /** Records one `?pair=` connect from `network`; false once that network has used its budget. */
+  async allowPairAttempt(network: string): Promise<boolean> {
+    return this.pairAttempts.allow(network);
+  }
+
   private get(lookup: string): Entry | null {
     const entry = this.ctx.storage.kv.get<Entry>(lookup);
     if (!entry) return null;

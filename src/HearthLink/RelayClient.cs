@@ -18,6 +18,7 @@ public sealed class RelayException(int closeCode,string message) : Exception(mes
         RelayProtocol.Forbidden=>"This PC is not paired with that computer.",
         RelayProtocol.Offline=>"That computer is offline or the pairing code has expired.",
         RelayProtocol.Timeout=>"That computer did not answer. Check HearthLink is running there.",
+        RelayProtocol.TooMany=>"Too many pairing attempts from this network. Wait 10 minutes and try again.",
         _=>"The relay closed the connection unexpectedly."
     });
 }

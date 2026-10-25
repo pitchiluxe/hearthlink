@@ -32,8 +32,8 @@ interface Inbox {
 const inboxes = new WeakMap<WebSocket, Inbox>();
 
 /** Opens a WebSocket upgrade against the worker and starts queueing its messages. No auth is performed. */
-export async function openRaw(path: string): Promise<WebSocket> {
-  const res = await SELF.fetch(`https://relay.test${path}`, { headers: { Upgrade: "websocket" } });
+export async function openRaw(path: string, headers: Record<string, string> = {}): Promise<WebSocket> {
+  const res = await SELF.fetch(`https://relay.test${path}`, { headers: { Upgrade: "websocket", ...headers } });
   const ws = res.webSocket;
   if (!ws) throw new Error(`upgrade failed: ${res.status}`);
   ws.accept();
@@ -82,8 +82,13 @@ export async function answerChallenge(
 }
 
 /** Opens `path`, answers the challenge (signed for the path without its query string) and waits for ok. */
-export async function openAuthed(path: string, keyPem: string, certPem: string): Promise<WebSocket> {
-  const ws = await openRaw(path);
+export async function openAuthed(
+  path: string,
+  keyPem: string,
+  certPem: string,
+  headers: Record<string, string> = {},
+): Promise<WebSocket> {
+  const ws = await openRaw(path, headers);
   await answerChallenge(ws, await nextJson(ws), path.split("?")[0], keyPem, certPem);
   const ok = await nextJson(ws);
   if (ok.t !== "ok") throw new Error(`auth failed: ${JSON.stringify(ok)}`);

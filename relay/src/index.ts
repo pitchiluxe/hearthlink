@@ -1,5 +1,6 @@
 import { authenticate } from "./auth";
 import type { Env } from "./env";
+import { clientNetwork } from "./limits";
 
 export { HostRoom } from "./host-room";
 export { PairingIndex } from "./pairing-index";
@@ -77,7 +78,12 @@ async function routeConnect(request: Request, url: URL, env: Env): Promise<Respo
     return env.HOSTS.get(env.HOSTS.idFromName(to)).fetch(request);
   }
   if (!LOOKUP.test(pair!)) return bad("pair");
-  const host = await env.INDEX.get(env.INDEX.idFromName("index")).resolve(pair!);
+  const index = env.INDEX.get(env.INDEX.idFromName("index"));
+  // Refused before the challenge, so a blocked client cannot keep probing which lookups are open.
+  if (!(await index.allowPairAttempt(clientNetwork(request.headers.get("CF-Connecting-IP"))))) {
+    return upgrade(async (server) => server.close(4429, "too many pairing attempts"));
+  }
+  const host = await index.resolve(pair!);
   if (host === null) {
     return upgrade(async (server) => {
       if ((await authenticate(server, "/v1/connect")) !== null) server.close(4404, "unknown lookup");

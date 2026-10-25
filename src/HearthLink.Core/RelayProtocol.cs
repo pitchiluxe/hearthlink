@@ -5,7 +5,7 @@ public static class RelayProtocol
 {
     public const string Presence="/v1/presence", Status="/v1/status", Connect="/v1/connect", Accept="/v1/accept";
     public const int MessageBytes=65536;
-    public const int BadMessage=4400, NotAuthenticated=4401, Forbidden=4403, Offline=4404, Timeout=4408, Replaced=4409;
+    public const int BadMessage=4400, NotAuthenticated=4401, Forbidden=4403, Offline=4404, Timeout=4408, Replaced=4409, TooMany=4429;
     public static byte[] SignatureInput(string endpoint, ReadOnlySpan<byte> nonce)
     {
         byte[] prefix=Encoding.UTF8.GetBytes("hearthlink-relay-v1\n"+endpoint+"\n"), result=new byte[prefix.Length+nonce.Length];
