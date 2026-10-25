@@ -23,7 +23,7 @@ public sealed class RelayException(int closeCode,string message) : Exception(mes
 }
 public static class RelayClient
 {
-    public const string DefaultUrl="wss://hearthlink-relay.REPLACE.workers.dev";
+    public const string DefaultUrl="wss://hearthlink-relay.erickomari.workers.dev";
     static readonly TimeSpan HandshakeLimit=TimeSpan.FromSeconds(15), ReadyLimit=TimeSpan.FromSeconds(25);
     /// <summary>The relay's base URL joined with an endpoint path and query. Only wss:// is accepted, except ws:// on loopback for local testing.</summary>
     public static Uri Endpoint(string relayUrl,string endpointWithQuery)

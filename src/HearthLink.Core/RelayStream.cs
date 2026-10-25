@@ -46,7 +46,14 @@ public sealed class RelayStream(WebSocket socket) : Stream
     {
         if(disposing)
         {
-            try { if(socket.State==WebSocketState.Open) socket.CloseOutputAsync(WebSocketCloseStatus.NormalClosure,null,CancellationToken.None).Wait(TimeSpan.FromSeconds(2)); } catch { }
+            // A full close handshake lets the peer read the last messages. Disposing straight after sending the close frame
+            // can reset the TCP connection, and the relay's edge then drops data it has not yet forwarded.
+            try
+            {
+                using var limit=new CancellationTokenSource(TimeSpan.FromSeconds(2));
+                if(socket.State is WebSocketState.Open or WebSocketState.CloseReceived) socket.CloseAsync(WebSocketCloseStatus.NormalClosure,null,limit.Token).Wait(TimeSpan.FromSeconds(3));
+            }
+            catch { }
             socket.Dispose();
         }
         base.Dispose(disposing);
