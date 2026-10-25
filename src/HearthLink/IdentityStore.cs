@@ -14,6 +14,7 @@ public sealed class Settings
     public bool Controller { get; set; }=true;
     public TrustBook Controllers { get; set; }=new();
     public List<Peer> Hosts { get; set; }=[];
+    public string RelayUrl { get; set; }=RelayClient.DefaultUrl;
 }
 public sealed class IdentityStore
 {

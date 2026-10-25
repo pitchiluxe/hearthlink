@@ -14,7 +14,8 @@ public sealed class RelayStream(WebSocket socket) : Stream
     public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
     public override void SetLength(long value) => throw new NotSupportedException();
     public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
-    public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    // SslStream writes its handshake-failure alert synchronously; everything else uses WriteAsync.
+    public override void Write(byte[] buffer, int offset, int count) => WriteAsync(buffer.AsMemory(offset,count)).AsTask().GetAwaiter().GetResult();
     public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
     {
         if(buffer.IsEmpty || closed) return 0;

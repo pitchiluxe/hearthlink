@@ -128,6 +128,9 @@ try
         {
             await c.Send(new("pair",Name:"test stranger",Code:"00000000")); Check((await c.Read()).Kind=="denied","actual HostServer denies pairing without an open window");
         }
+        string? relayUrl=Environment.GetEnvironmentVariable("HEARTHLINK_RELAY_URL");
+        if(string.IsNullOrWhiteSpace(relayUrl)) Console.WriteLine("SKIP: relay checks (HEARTHLINK_RELAY_URL not set)");
+        else await RelayChecks.Run(relayUrl.Trim(),fixture.Window,fixture.Server,host,controller,stranger,root,Check);
         await fixture.Window.OnUi(()=> { host.Config.Controllers.Remove(controller.Fingerprint); host.Save(); return true; });
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
