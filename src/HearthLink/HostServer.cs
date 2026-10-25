@@ -82,6 +82,7 @@ public sealed class HostServer : IDisposable
                     await connection.Send(new("denied",Text:"Controller is not trusted. Pair at the host first."),initial.Token);
                     await ui.OnUi(()=> { identity.Audit(fingerprint,"untrusted-rejected"); return true; }); return;
                 }
+                if(request.Kind is "probe" or "session") await ui.OnUi(()=>ui.UpgradeTrust(fingerprint,peer));
                 if(request.Kind=="probe") { await connection.Send(new("online",Name:identity.Config.Name),initial.Token); return; }
                 if(request.Kind!="session") return;
                 if(request.Value!=Wire.ProtocolVersion) {await connection.Send(new("denied",Text:"Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved."),initial.Token); return;}

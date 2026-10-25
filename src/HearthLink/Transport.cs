@@ -19,6 +19,25 @@ public sealed class Connection : IDisposable
         try { await Wire.Write(Stream,packet,token); } finally { write.Release(); }
     }
     public Task<Packet> Read(CancellationToken token=default)=>Wire.Read(Stream,token);
+    public string RemoteFingerprint=>IdentityStore.FingerprintOf(Stream.RemoteCertificate ?? throw new InvalidOperationException("No remote certificate."));
+    /// <summary>Status probe. An "online" answer means the host still trusts this PC, so a one-way pairing completes here.</summary>
+    public async Task<Packet> Probe(IdentityStore identity,CancellationToken token)
+    {
+        await Send(new("probe"),token);
+        var reply=await Read(token);
+        if(reply.Kind=="online") identity.UpgradeTrust(RemoteFingerprint,null);
+        return reply;
+    }
+    /// <summary>Sends a pairing request; on "paired" trusts the host both ways and returns its name, otherwise null.</summary>
+    public async Task<string?> Pair(IdentityStore identity,string code,string fallbackName,string? lanAddress,CancellationToken token)
+    {
+        await Send(new("pair",Name:PeerName.Clean(identity.Config.Name) is {Length:>0} own?own:"Controller",Code:code),token);
+        var reply=await Read(token);
+        if(reply.Kind!="paired") return null;
+        string name=PeerName.Clean(reply.Name) is {Length:>0} n?n:fallbackName;
+        identity.TrustBothWays(RemoteFingerprint,name,lanAddress); identity.Audit(RemoteFingerprint,"paired");
+        return name;
+    }
     public void Dispose() { Stream.Dispose(); transport.Dispose(); }
     public static async Task<Connection> Connect(string address,IdentityStore identity,string? expected,Func<string,bool>? confirm=null)
     {

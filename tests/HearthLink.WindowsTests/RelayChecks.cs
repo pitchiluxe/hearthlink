@@ -4,18 +4,12 @@ using System.Diagnostics;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
 using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 
 // Integration checks against a running relay (`cd relay && npx wrangler dev --port 8787`, HEARTHLINK_RELAY_URL=ws://127.0.0.1:8787).
 static class RelayChecks
 {
-    [DllImport("user32.dll")] static extern bool EnumThreadWindows(uint thread,EnumWindows callback,IntPtr state);
-    [DllImport("user32.dll",CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr window,System.Text.StringBuilder name,int size);
-    [DllImport("user32.dll")] static extern bool PostMessage(IntPtr window,uint message,IntPtr wParam,IntPtr lParam);
-    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
-    delegate bool EnumWindows(IntPtr window,IntPtr state);
     const string Online="Online through relay";
 
     static async Task Until(Func<bool> condition,TimeSpan limit)
@@ -24,13 +18,6 @@ static class RelayChecks
         while(!condition()) { if(clock.Elapsed>limit) throw new TimeoutException("Condition not reached within "+limit); await Task.Delay(100); }
     }
     static async Task<bool> Reached(Func<bool> condition,TimeSpan limit) { try { await Until(condition,limit); return true; } catch(TimeoutException) { return false; } }
-    /// <summary>Message boxes (#32770) currently open on the given UI thread.</summary>
-    static List<IntPtr> Dialogs(uint thread)
-    {
-        var found=new List<IntPtr>();
-        EnumThreadWindows(thread,(window,_)=> { var name=new System.Text.StringBuilder(64); GetClassName(window,name,name.Capacity); if(name.ToString()=="#32770") found.Add(window); return true; },IntPtr.Zero);
-        return found;
-    }
     public static async Task Run(string relayUrl,MainWindow window,HostServer server,IdentityStore host,IdentityStore controller,IdentityStore stranger,string root,Action<bool,string> check)
     {
         using var lifetime=new CancellationTokenSource(TimeSpan.FromMinutes(5)); var token=lifetime.Token;
@@ -86,19 +73,19 @@ static class RelayChecks
         }
 
         // Review focus: the relay pipes a second session, and the host app answers busy.
-        uint uiThread=await window.OnUi(GetCurrentThreadId);
+        uint uiThread=await window.OnUi(NativeDialogs.CurrentThread);
         using(var first=await RelayClient.ConnectHost(relayUrl,controller,host.Fingerprint,token))
         {
             await first.Send(new("session",Control:false,Value:Wire.ProtocolVersion),token);
             // The approval prompt appears only after the host has claimed its single session slot.
-            await Until(()=>Dialogs(uiThread).Count>0,TimeSpan.FromSeconds(15));
+            await Until(()=>NativeDialogs.Open(uiThread).Count>0,TimeSpan.FromSeconds(15));
             Packet busy;
             using(var c=await RelayClient.ConnectHost(relayUrl,second,host.Fingerprint,token))
             {
                 await c.Send(new("session",Control:true,Value:Wire.ProtocolVersion),token);
                 busy=await c.Read(token);
             }
-            foreach(var dialog in Dialogs(uiThread)) PostMessage(dialog,0x0111 /* WM_COMMAND */,7 /* IDNO */,IntPtr.Zero);
+            foreach(var dialog in NativeDialogs.Open(uiThread)) NativeDialogs.Press(dialog,NativeDialogs.No);
             var declined=await first.Read(token);
             check(busy.Kind=="denied" && busy.Text=="Host already has an active session." && declined.Kind=="denied","second relayed session gets busy message");
         }

@@ -69,14 +69,14 @@ public sealed class MainWindow : Form
         address.KeyDown+=(_,e)=> {if(e.KeyCode==Keys.Enter) {e.SuppressKeyPress=true; pairButton.PerformClick();}};
         control.Text="Keyboard & mouse"; control.ForeColor=Brand.Ink; control.Margin=new(0,10,12,0);
         var connect=AsyncAction("Connect",ConnectHost); Brand.Style(connect,true);
-        var forget=Action("Forget",()=> { if(hosts.SelectedIndices.Count==0) return; identity.Config.Hosts.RemoveAt(hosts.SelectedIndices[0]); identity.Save(); PopulateHosts(); });
+        var forget=Action("Forget",()=> { if(hosts.SelectedIndices.Count>0) RemovePc(identity.Config.Hosts[hosts.SelectedIndices[0]].Fingerprint); });
         devices.Controls.Add(Stack((deviceHeading,64),(well,-1),(connectionProgress,26),(pairRow,42),(Row(control,connect,forget),44)));
         var access=new Surface {Dock=DockStyle.Fill,Margin=Padding.Empty}; workspace.Controls.Add(access,0,2);
         controllers.Dock=DockStyle.Fill; controllers.BorderStyle=BorderStyle.None; controllers.BackColor=Color.White; controllers.ForeColor=Brand.Ink; controllers.HorizontalScrollbar=true;
         controllers.DrawMode=DrawMode.OwnerDrawFixed; controllers.ItemHeight=42;
         controllers.DrawItem+=(_,e)=> { if(e.Index<0) return; var item=(ControllerItem)controllers.Items[e.Index]; bool selected=(e.State&DrawItemState.Selected)!=0; using var brush=new SolidBrush(selected?Color.FromArgb(233,241,255):Color.White); e.Graphics.FillRectangle(brush,e.Bounds); TextRenderer.DrawText(e.Graphics,item.Name,Font,new Point(e.Bounds.Left+6,e.Bounds.Top+3),Brand.Ink); using var small=new Font("Consolas",8); TextRenderer.DrawText(e.Graphics,item.Fingerprint,small,new Point(e.Bounds.Left+6,e.Bounds.Top+23),Brand.Muted); e.DrawFocusRectangle(); };
         var controllerWell=new Panel {Dock=DockStyle.Fill}; controllerWell.Controls.Add(controllers); controllerWell.Controls.Add(emptyControllers);
-        var revoke=Action("Revoke controller",()=> { if(controllers.SelectedItem is not ControllerItem item) return; identity.Config.Controllers.Remove(item.Fingerprint); identity.Save(); server?.Disconnect(); PopulateControllers(); }); Brand.Style(revoke,danger:true);
+        var revoke=Action("Revoke controller",()=> { if(controllers.SelectedItem is ControllerItem item) RemovePc(item.Fingerprint); }); Brand.Style(revoke,danger:true);
         access.Controls.Add(Stack((Title("Who can request access",14),30),(Caption("Approved controllers still need your permission to connect."),28),(controllerWell,-1),(Row(revoke,Action("Session history",OpenHistory)),40)));
         var local=new Surface {Dock=DockStyle.Fill,Margin=Padding.Empty,Padding=new(18)}; body.Controls.Add(local,2,0);
         var localScroll=new Panel {Dock=DockStyle.Fill,AutoScroll=true}; local.Controls.Add(localScroll);
@@ -96,7 +96,7 @@ public sealed class MainWindow : Form
         Local(Action("End remote session",()=>server?.Disconnect()),40); Local(new Panel(),16);
         Local(Action("App updates",updates.Show),40); Local(new Panel(),12);
         Local(Title("Pair with this PC",13),32);
-        Local(Action("Open pairing for 2 minutes",()=> { codeLabel.Text=pairing.Open(DateTimeOffset.UtcNow)+"  •  expires in 2 minutes"; codeLabel.ForeColor=Brand.Blue; }),40);
+        Local(Action("Open pairing for 2 minutes",()=>OpenPairing()),40);
         codeLabel.AutoSize=false; codeLabel.Text="Pairing is closed"; codeLabel.Font=new("Segoe UI",11,FontStyle.Bold); codeLabel.ForeColor=Brand.Muted; codeLabel.Padding=new(0,10,0,0); Local(codeLabel,46);
         Local(Caption("This PC’s identity · SHA-256"),28);
         var fingerprint=new TextBox {Text=identity.Fingerprint,ReadOnly=true,Multiline=true,WordWrap=true,Font=new("Consolas",10),BorderStyle=BorderStyle.None,BackColor=Color.FromArgb(242,246,251),ForeColor=Brand.Ink,TabStop=true}; Local(fingerprint,64);
@@ -171,12 +171,22 @@ public sealed class MainWindow : Form
         try { server=new(identity,this); server.Start(); hostStatus.Text="Host ready • attended approval required • TCP 45831"; }
         catch(Exception e) { hostStatus.Text="Host unavailable: "+e.Message; server?.Dispose(); server=null; }
     }
+    public string OpenPairing() { string code=pairing.Open(DateTimeOffset.UtcNow); codeLabel.Text=code+"  •  expires in 2 minutes"; codeLabel.ForeColor=Brand.Blue; return code; }
+    /// <summary>A LAN peer address as the host saw it, or null for "relay:…" peers.</summary>
+    static string? LanAddress(string peer)=>System.Net.IPAddress.TryParse(peer,out _)?peer:null;
+    void RemovePc(string fingerprint) { identity.Remove(fingerprint); server?.Disconnect(); PopulateHosts(); PopulateControllers(); }
+    /// <summary>Called by the host after a trusted controller's pinned exchange.</summary>
+    public bool UpgradeTrust(string fingerprint,string peer)
+    {
+        if(!identity.UpgradeTrust(fingerprint,LanAddress(peer))) return false;
+        PopulateHosts(); PopulateControllers(); return true;
+    }
     public bool PairController(string fingerprint,string name,string code,string peer)
     {
         if(!PeerName.Valid(name) || !pairing.Consume(code,DateTimeOffset.UtcNow,peer)) { identity.Audit(fingerprint,"pair-rejected"); return false; }
         codeLabel.Text="Code used • open a new pairing window";
-        if(MessageBox.Show(this,$"Trust a new controller?\n\nController name: {name}\nCompare this fingerprint with the controller’s own identity:\n{fingerprint}\n\nIt will still need approval for each session.","HearthLink pairing",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return false;
-        identity.Config.Controllers.Add(fingerprint,name); identity.Save(); identity.Audit(fingerprint,"paired"); PopulateControllers(); return true;
+        if(MessageBox.Show(this,$"Trust this PC both ways?\n\nPC name: {name}\nCompare this fingerprint with the other PC's own identity:\n{fingerprint}\n\nEach PC will be able to connect to the other. The other PC will still need approval for each session.","HearthLink pairing",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return false;
+        identity.TrustBothWays(fingerprint,name,LanAddress(peer)); identity.Audit(fingerprint,"paired"); PopulateHosts(); PopulateControllers(); return true;
     }
     void PopulateControllers() { controllers.Items.Clear(); foreach(var entry in identity.Config.Controllers.Entries) controllers.Items.Add(new ControllerItem(PeerName.Clean(entry.Value),entry.Key)); emptyControllers.Visible=controllers.Items.Count==0; controllers.Visible=controllers.Items.Count>0; }
     void PopulateHosts()
@@ -208,13 +218,11 @@ public sealed class MainWindow : Form
         });
         string? code=Prompt("Enter the one-time code shown on the remote PC"); if(code==null) {connectionProgress.Text="Pairing cancelled • computer name saved"; return;}
         connectionProgress.Text="Waiting for pairing approval on "+target;
-        await connection.Send(new("pair",Name:PeerName.Clean(identity.Config.Name) is {Length:>0} own?own:"Controller",Code:code));
         using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
-        var reply=await connection.Read(timeout.Token);
-        if(reply.Kind!="paired") throw new InvalidOperationException("Pairing rejected. Open a new pairing window on the host, check the code, and approve the request there.");
-        string hostName=PeerName.Clean(reply.Name); if(hostName.Length==0) hostName=target;
-        identity.Config.Hosts.Add(new(hostName,target,fingerprint!,DateTimeOffset.UtcNow)); identity.Save(); PopulateHosts();
-        hosts.Items[^1].Selected=true; hosts.Items[^1].EnsureVisible();
+        if(await connection.Pair(identity,code,target,target,timeout.Token)==null) throw new InvalidOperationException("Pairing rejected. Open a new pairing window on the host, check the code, and approve the request there.");
+        PopulateHosts(); PopulateControllers();
+        int paired=identity.Config.Hosts.FindIndex(p=>p.Fingerprint==fingerprint);
+        hosts.Items[paired].Selected=true; hosts.Items[paired].EnsureVisible();
         connectionProgress.Text="Paired • requesting session approval"; await ConnectHost();
     }
     async Task ConnectHost()
@@ -235,6 +243,7 @@ public sealed class MainWindow : Form
             if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved.");
             connectionProgress.Text="Connected to "+host.Name;
             identity.Audit(host.Fingerprint,"outbound-connected");
+            if(identity.UpgradeTrust(host.Fingerprint,null)) PopulateControllers();
             new Viewer(connection,PeerName.Clean(host.Name),control.Checked,reply.Monitors??["Display 1"]).Show(this); connection=null;
         }
         finally { connection?.Dispose(); }
@@ -242,6 +251,7 @@ public sealed class MainWindow : Form
     async Task RefreshHosts()
     {
         if(polling) return; polling=true;
+        int trusted=identity.Config.Controllers.Entries.Count;
         try
         {
             foreach(var host in identity.Config.Hosts.ToArray())
@@ -251,7 +261,7 @@ public sealed class MainWindow : Form
                 {
                     using var c=await Connection.Connect(host.Address,identity,host.Fingerprint);
                     using var timeout=new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    await c.Send(new("probe"),timeout.Token); var reply=await c.Read(timeout.Token);
+                    var reply=await c.Probe(identity,timeout.Token);
                     if(reply.Kind=="online") { state="Online"; seen=DateTimeOffset.UtcNow; }
                     else state="Trust revoked";
                 }
@@ -263,6 +273,7 @@ public sealed class MainWindow : Form
                 if(index<hosts.Items.Count) { hosts.Items[index].SubItems[2].Text=state; hosts.Items[index].SubItems[3].Text=seen?.ToLocalTime().ToString("g")??"Never"; }
             }
             identity.Save();
+            if(identity.Config.Controllers.Entries.Count!=trusted) PopulateControllers();
         }
         finally { polling=false; }
     }

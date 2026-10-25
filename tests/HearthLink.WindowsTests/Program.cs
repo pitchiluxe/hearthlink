@@ -128,6 +128,43 @@ try
         {
             await c.Send(new("pair",Name:"test stranger",Code:"00000000")); Check((await c.Read()).Kind=="denied","actual HostServer denies pairing without an open window");
         }
+        bool HasHost(IdentityStore store,string fingerprint,string address)=>store.Config.Hosts.Exists(p=>p.Fingerprint==fingerprint && p.Address==address);
+        using var limit=new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        uint dialogThread=await fixture.Window.OnUi(NativeDialogs.CurrentThread);
+        var newcomer=new IdentityStore(Path.Combine(root,"newcomer")); newcomer.Config.Name="newcomer";
+        {
+            string code=await fixture.Window.OnUi(fixture.Window.OpenPairing);
+            using var c=await Connection.Connect("127.0.0.1",newcomer,null,actual=>actual==host.Fingerprint);
+            var pairing=c.Pair(newcomer,code,"fallback","127.0.0.1",limit.Token);
+            string prompt=await NativeDialogs.Answer(dialogThread,NativeDialogs.Yes,TimeSpan.FromSeconds(15));
+            string? name=await pairing;
+            bool hostSide=await fixture.Window.OnUi(()=>host.Config.Controllers.Contains(newcomer.Fingerprint) && HasHost(host,newcomer.Fingerprint,"127.0.0.1"));
+            Check(name!=null && prompt.StartsWith("Trust this PC both ways?") && hostSide && newcomer.Config.Controllers.Contains(host.Fingerprint) && HasHost(newcomer,host.Fingerprint,"127.0.0.1"),"pairing stores both directions");
+        }
+        var oneWay=new IdentityStore(Path.Combine(root,"one-way"));
+        oneWay.Config.Hosts.Add(new("host","127.0.0.1",host.Fingerprint)); oneWay.Save();
+        await fixture.Window.OnUi(()=> { host.Config.Controllers.Add(oneWay.Fingerprint,"one-way"); host.Save(); return true; });
+        using(var c=await Connection.Connect("127.0.0.1",oneWay,host.Fingerprint))
+        {
+            bool online=(await c.Probe(oneWay,limit.Token)).Kind=="online";
+            bool hostSide=await fixture.Window.OnUi(()=>HasHost(host,oneWay.Fingerprint,"127.0.0.1"));
+            Check(online && hostSide && oneWay.Config.Controllers.Contains(host.Fingerprint) && new IdentityStore(Path.Combine(root,"one-way")).Config.Controllers.Contains(host.Fingerprint),"one-way pairing upgrades on next probe");
+        }
+        // The stranger holds the host in its own list, but the host never paired it: neither side may gain trust.
+        stranger.Config.Hosts.Add(new("host","127.0.0.1",host.Fingerprint));
+        using(var c=await Connection.Connect("127.0.0.1",stranger,host.Fingerprint))
+        {
+            bool denied=(await c.Probe(stranger,limit.Token)).Kind=="denied";
+            bool hostSide=await fixture.Window.OnUi(()=>host.Config.Controllers.Contains(stranger.Fingerprint) || host.Config.Hosts.Exists(p=>p.Fingerprint==stranger.Fingerprint));
+            Check(denied && !hostSide && !stranger.Config.Controllers.Contains(host.Fingerprint),"upgrade never trusts an unpaired PC");
+        }
+        stranger.Config.Hosts.Clear();
+        {
+            bool removed=await fixture.Window.OnUi(()=>host.Remove(oneWay.Fingerprint));
+            var reloaded=new IdentityStore(Path.Combine(root,"host"));
+            bool gone(IdentityStore store)=>!store.Config.Controllers.Contains(oneWay.Fingerprint) && !store.Config.Hosts.Exists(p=>p.Fingerprint==oneWay.Fingerprint);
+            Check(removed && await fixture.Window.OnUi(()=>gone(host)) && gone(reloaded),"remove PC clears both roles");
+        }
         string? relayUrl=Environment.GetEnvironmentVariable("HEARTHLINK_RELAY_URL");
         if(string.IsNullOrWhiteSpace(relayUrl)) Console.WriteLine("SKIP: relay checks (HEARTHLINK_RELAY_URL not set)");
         else await RelayChecks.Run(relayUrl.Trim(),fixture.Window,fixture.Server,host,controller,stranger,root,Check);
