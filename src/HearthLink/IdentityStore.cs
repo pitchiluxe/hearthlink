@@ -14,7 +14,8 @@ public sealed class Settings
     public bool Controller { get; set; }=true;
     public TrustBook Controllers { get; set; }=new();
     public List<Peer> Hosts { get; set; }=[];
-    public string RelayUrl { get; set; }=RelayClient.DefaultUrl;
+    /// <summary>A relay the user chose; empty means the app's built-in <see cref="RelayClient.DefaultUrl"/>, so saved settings follow app updates.</summary>
+    public string RelayUrl { get; set; }="";
     public bool LanListener { get; set; }
 }
 public sealed class IdentityStore
@@ -25,7 +26,10 @@ public sealed class IdentityStore
     public string Fingerprint => FingerprintOf(Certificate);
     /// <summary>A relay address for this run only (never saved), e.g. from HEARTHLINK_RELAY_URL.</summary>
     public string? RelayOverride { get; set; }
-    public string RelayUrl => string.IsNullOrWhiteSpace(RelayOverride) ? Config.RelayUrl : RelayOverride.Trim();
+    public string RelayUrl => !string.IsNullOrWhiteSpace(RelayOverride) ? RelayOverride.Trim() : Chosen(Config.RelayUrl) ?? RelayClient.DefaultUrl;
+    // Pre-release 0.3.0 builds saved their built-in address into settings, including the undeployed placeholder.
+    static readonly string[] SavedDefaults=["wss://hearthlink-relay.REPLACE.workers.dev",RelayClient.DefaultUrl];
+    static string? Chosen(string saved)=>string.IsNullOrWhiteSpace(saved) || SavedDefaults.Contains(saved.Trim()) ? null : saved.Trim();
     public static string FingerprintOf(X509Certificate cert) => Convert.ToHexString(SHA256.HashData(cert.GetRawCertData()));
     public IdentityStore(string? folder=null)
     {

@@ -34,6 +34,16 @@ try
     Check(new IdentityStore(Path.Combine(root,"host")).Config.Controllers.Contains(controller.Fingerprint),"protected trust persistence");
     host.Config.LastTarget="TECHNODESK"; host.Save();
     Check(new IdentityStore(Path.Combine(root,"host")).Config.LastTarget=="TECHNODESK","computer name in pair box survives restart");
+    {
+        // A saved profile must follow the app's built-in relay; only an address the user chose is kept.
+        var relayProfile=new IdentityStore(Path.Combine(root,"relay-profile")); relayProfile.Save();
+        bool followsDefault=new IdentityStore(Path.Combine(root,"relay-profile")).RelayUrl==RelayClient.DefaultUrl;
+        relayProfile.Config.RelayUrl="wss://hearthlink-relay.REPLACE.workers.dev"; relayProfile.Save();
+        bool placeholderIgnored=new IdentityStore(Path.Combine(root,"relay-profile")).RelayUrl==RelayClient.DefaultUrl;
+        relayProfile.Config.RelayUrl="wss://relay.example.com"; relayProfile.Save();
+        bool chosenKept=new IdentityStore(Path.Combine(root,"relay-profile")).RelayUrl=="wss://relay.example.com";
+        Check(followsDefault && placeholderIgnored && chosenKept,"saved settings follow the built-in relay address");
+    }
     byte[] protectedKey=File.ReadAllBytes(Path.Combine(root,"host","identity.protected"));
     Check(protectedKey[0]!=0x30,"private key is not stored as raw PFX");
     var listener=new TcpListener(IPAddress.Loopback,Connection.Port); listener.Start();
