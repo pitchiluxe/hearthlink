@@ -35,7 +35,7 @@ public sealed class MainWindow : Form
         identity=store??new IdentityStore();
         if(store==null) identity.RelayOverride=Environment.GetEnvironmentVariable("HEARTHLINK_RELAY_URL");
         updates=new(this,identity);
-        Text="HearthLink • Your computers"; ClientSize=new(1340,880); MinimumSize=new(1120,790);
+        Text="HearthLink • Your computers"; Size=new(1096,783); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
         Font=new("Segoe UI",10); BackColor=Brand.Canvas; ForeColor=Brand.Ink; Icon=Brand.AppIcon;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};
         root.ColumnStyles.Add(new(SizeType.Absolute,180)); root.ColumnStyles.Add(new(SizeType.Percent,100)); Controls.Add(root);
