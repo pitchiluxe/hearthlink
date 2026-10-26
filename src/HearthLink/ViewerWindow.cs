@@ -73,6 +73,7 @@ public sealed class Viewer : Form
                 if(e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
                 var items=TransferStrip.Expand(paths);
                 if(items.Count==0) { strip.Notice("Nothing to send: those names cannot be copied."); return; }
+                if(items.Count>=TransferStrip.MaxItems) { strip.Notice($"Too many items: drop fewer than {TransferStrip.MaxItems:N0} files and folders at a time."); return; }
                 await strip.Send(items);
             };
         }

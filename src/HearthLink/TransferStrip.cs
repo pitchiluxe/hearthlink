@@ -31,6 +31,8 @@ public sealed class TransferStrip : Panel
     public sealed record Outgoing(string? Local,int Root,string RootName,string Relative,long Size);
     /// <summary>One thing to get: a host file (Remote set) or a folder to create here (Remote null), numbered and placed like <see cref="Outgoing"/>.</summary>
     public sealed record Incoming(string? Remote,int Root,string RootName,string Relative,long Size);
+    /// <summary>Far above any real batch; only stops a listing that never ends (for example from a hostile host) before it fills memory.</summary>
+    public const int MaxItems=1_000_000;
     static string Inner(string relative,string name)=>relative.Length==0?name:relative+"\\"+name;
     static bool Fits(string rootName,string relative,string name)=>FilePolicy.ValidName(name) && Inner(relative,name).Split('\\').Length<FileNames.MaxDepth && Inner(relative,name).Length+rootName.Length<FileNames.MaxRelativeLength;
     /// <summary>
@@ -42,10 +44,11 @@ public sealed class TransferStrip : Panel
         var items=new List<Outgoing>(); int roots=0;
         void Walk(string folder,int root,string rootName,string relative)
         {
+            if(items.Count>=MaxItems) return;
             items.Add(new(null,root,rootName,relative,0));
             var options=new EnumerationOptions {IgnoreInaccessible=true,AttributesToSkip=FileAttributes.ReparsePoint|FileAttributes.System};
             foreach(var file in new DirectoryInfo(folder).EnumerateFiles("*",options).Where(f=>Fits(rootName,relative,f.Name)).OrderBy(f=>f.Name,StringComparer.OrdinalIgnoreCase))
-                items.Add(new(file.FullName,root,rootName,Inner(relative,file.Name),file.Length));
+                if(items.Count<MaxItems) items.Add(new(file.FullName,root,rootName,Inner(relative,file.Name),file.Length));
             foreach(var sub in new DirectoryInfo(folder).EnumerateDirectories("*",options).Where(d=>Fits(rootName,relative,d.Name)).OrderBy(d=>d.Name,StringComparer.OrdinalIgnoreCase))
                 Walk(sub.FullName,root,rootName,Inner(relative,sub.Name));
         }
@@ -62,10 +65,11 @@ public sealed class TransferStrip : Panel
         var items=new List<Incoming>(); int roots=0;
         async Task Walk(string folder,int root,string rootName,string relative)
         {
+            if(items.Count>=MaxItems) return;
             items.Add(new(null,root,rootName,relative,0));
             var listing=await client.List(folder,token);
             foreach(var file in listing.Entries.Where(e=>!e.Folder && Fits(rootName,relative,e.Name)))
-                items.Add(new(Path.Combine(listing.Folder,file.Name),root,rootName,Inner(relative,file.Name),file.Size));
+                if(items.Count<MaxItems) items.Add(new(Path.Combine(listing.Folder,file.Name),root,rootName,Inner(relative,file.Name),file.Size));
             foreach(var sub in listing.Entries.Where(e=>e.Folder && Fits(rootName,relative,e.Name)))
                 await Walk(Path.Combine(listing.Folder,sub.Name),root,rootName,Inner(relative,sub.Name));
         }
@@ -121,6 +125,7 @@ public sealed class TransferStrip : Panel
         {
             using var client=new FileClient(await open(cts.Token));
             var jobs=await prepare(client,cts.Token);
+            if(jobs.Count>=MaxItems) throw new InvalidOperationException($"Too many items: pick fewer than {MaxItems:N0} files and folders at a time.");
             for(int i=0;i<jobs.Count;i++)
             {
                 var job=jobs[i]; int index=i;
