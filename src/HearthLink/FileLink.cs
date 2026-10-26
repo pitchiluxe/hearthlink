@@ -10,6 +10,12 @@ namespace HearthLink;
 public static class FileLink
 {
     public const int Window=4*1024*1024;
+    /// <summary>Free bytes on the drive holding <paramref name="folder"/>; unknown (network paths) counts as unlimited, and the write itself still fails cleanly.</summary>
+    public static long FreeSpace(string folder)
+    {
+        try { return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(folder))!).AvailableFreeSpace; }
+        catch(Exception e) when(e is ArgumentException or IOException or UnauthorizedAccessException) { return long.MaxValue; }
+    }
     public static async Task Send(Connection c,Stream source,long length,IProgress<long>? progress,CancellationToken token)
     {
         var id=Guid.NewGuid(); using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
@@ -51,7 +57,7 @@ public static class FileLink
     }
 }
 /// <summary>Host side of a files connection: answers list, get and put until the connection or the session ends. Writes only into the receive folder.</summary>
-public sealed class FileHost(string receiveFolder)
+public sealed class FileHost(string receiveFolder,Func<string,long>? freeSpace=null)
 {
     public async Task Serve(Connection c,CancellationToken lifetime)
     {
@@ -62,7 +68,7 @@ public sealed class FileHost(string receiveFolder)
                 var request=await c.Read(lifetime);
                 switch(request.Kind)
                 {
-                    case "list": await c.Send(List(request.Text??""),lifetime); break;
+                    case "list": await c.Send(List(request.Text??"",request.Value),lifetime); break;
                     case "get": await Get(c,request.Text??"",lifetime); break;
                     case "put": await Put(c,request,lifetime); break;
                     case "folder": await Folder(c,request,lifetime); break;
@@ -84,7 +90,8 @@ public sealed class FileHost(string receiveFolder)
             if(entry!=null) yield return entry;
         }
     }
-    static Packet List(string folder)
+    /// <summary>One page of a folder listing: up to <see cref="FileNames.MaxEntries"/> entries from <paramref name="offset"/>, with the total in Sequence so the client asks for the rest.</summary>
+    static Packet List(string folder,int offset)
     {
         string? drives=null;
         if(folder.Length==0)
@@ -93,7 +100,7 @@ public sealed class FileHost(string receiveFolder)
             drives=FileNames.EncodeDrives(Drives());
         }
         if(!Path.IsPathFullyQualified(folder) || !Directory.Exists(folder)) return Denied("That folder no longer exists.");
-        try { var (full,entries)=Read(folder); return new("listing",Text:full,Data:FileNames.Encode(entries),Code:drives); }
+        try { var (full,entries)=Read(folder); return new("listing",Text:full,Data:FileNames.Encode(entries.Skip(Math.Max(0,offset))),Code:drives,Sequence:entries.Length); }
         catch(Exception e) when(e is UnauthorizedAccessException or IOException) { return Denied("This PC's Windows account cannot open that folder."); }
     }
     /// <summary>A folder's entries as both file manager panes show them: folders first, then by name; hidden and system items left out.</summary>
@@ -102,14 +109,13 @@ public sealed class FileHost(string receiveFolder)
         var options=new EnumerationOptions {IgnoreInaccessible=true,AttributesToSkip=FileAttributes.Hidden|FileAttributes.System};
         var entries=new DirectoryInfo(folder).EnumerateFileSystemInfos("*",options).Where(i=>FilePolicy.ValidName(i.Name))
             .Select(i=>new FileEntry(i.Name,i is DirectoryInfo,i is FileInfo f?f.Length:0,i.LastWriteTimeUtc))
-            .OrderByDescending(e=>e.Folder).ThenBy(e=>e.Name,StringComparer.OrdinalIgnoreCase).Take(FileNames.MaxEntries).ToArray();
+            .OrderByDescending(e=>e.Folder).ThenBy(e=>e.Name,StringComparer.OrdinalIgnoreCase).ToArray();
         return (Path.GetFullPath(folder),entries);
     }
     static async Task Get(Connection c,string path,CancellationToken token)
     {
         if(!Path.IsPathFullyQualified(path) || !File.Exists(path)) { await c.Send(Denied("That file no longer exists."),token); return; }
         var info=new FileInfo(path);
-        if(info.Length>FilePolicy.MaxFileBytes) { await c.Send(Denied("Files over 2 GiB cannot be copied."),token); return; }
         if(!FilePolicy.ValidName(info.Name)) { await c.Send(Denied("That file name cannot be copied."),token); return; }
         FileStream stream;
         try { stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.Read,FilePolicy.ChunkBytes,FileOptions.Asynchronous|FileOptions.SequentialScan); }
@@ -152,7 +158,9 @@ public sealed class FileHost(string receiveFolder)
         if(Base(request) is not {} root) { await c.Send(Denied("That folder no longer exists on this PC."),token); return; }
         // A name may be a path inside a folder the controller created with "folder" ("Album\2026\photo.jpg").
         if(Inside(root,name) is not {} target) { await c.Send(Denied("That file name is not allowed."),token); return; }
-        if(length<0 || length>FilePolicy.MaxFileBytes) { await c.Send(Denied("Files over 2 GiB cannot be copied."),token); return; }
+        if(length<0) { await c.Send(Denied("Invalid file size."),token); return; }
+        long free=(freeSpace??FileLink.FreeSpace)(root);
+        if(length>free) { await c.Send(Denied($"Not enough free space on the other PC: needs {FilePane.SizeText(length)}, has {FilePane.SizeText(free)}."),token); return; }
         string folder=Path.GetDirectoryName(target)!;
         Directory.CreateDirectory(folder);
         string destination=FileNames.Unique(folder,Path.GetFileName(target));
@@ -162,21 +170,40 @@ public sealed class FileHost(string receiveFolder)
     }
 }
 /// <summary>Controller side of a files connection. One operation at a time; after a cancelled or failed transfer, open a new connection.</summary>
-public sealed class FileClient(Connection c) : IDisposable
+public sealed class FileClient(Connection c,Func<string,long>? freeSpace=null) : IDisposable
 {
+    /// <summary>Largest folder listing accepted from the other PC.</summary>
+    public const int MaxListing=1_000_000;
     public async Task<(string Folder,IReadOnlyList<FileEntry> Entries,IReadOnlyList<DriveEntry> Drives)> List(string folder,CancellationToken token)
     {
         await c.Send(new("list",Text:folder),token);
         var reply=Expect(await c.Read(token),"listing");
-        return (reply.Text??"",FileNames.Decode(reply.Data??"[]"),reply.Code==null?[]:FileNames.DecodeDrives(reply.Code));
+        var entries=new List<FileEntry>(FileNames.Decode(reply.Data??"[]"));
+        // Big folders come in pages; ask for the rest of the same folder until the total the host reported has arrived.
+        long total=Math.Min(reply.Sequence,MaxListing);
+        while(entries.Count<total)
+        {
+            await c.Send(new("list",Text:reply.Text,Value:entries.Count),token);
+            var page=FileNames.Decode(Expect(await c.Read(token),"listing").Data??"[]");
+            if(page.Count==0) break;
+            entries.AddRange(page);
+        }
+        return (reply.Text??"",entries,reply.Code==null?[]:FileNames.DecodeDrives(reply.Code));
     }
     /// <summary>Copies a host file into <paramref name="localFolder"/> under a name that overwrites nothing; returns the saved path.</summary>
     public async Task<string> Get(string remotePath,string localFolder,IProgress<long>? progress,CancellationToken token)
     {
         await c.Send(new("get",Text:remotePath),token);
         var reply=Expect(await c.Read(token),"file");
-        if(!FilePolicy.ValidName(reply.Name??"") || reply.Sequence<0 || reply.Sequence>FilePolicy.MaxFileBytes) throw new InvalidDataException("The other PC sent an invalid file name or size.");
+        if(!FilePolicy.ValidName(reply.Name??"") || reply.Sequence<0) throw new InvalidDataException("The other PC sent an invalid file name or size.");
         Directory.CreateDirectory(localFolder);
+        long free=(freeSpace??FileLink.FreeSpace)(localFolder);
+        if(reply.Sequence>free)
+        {
+            // The host is already sending; this connection cannot be reused, so callers open a new one.
+            c.Dispose();
+            throw new InvalidOperationException($"Not enough free space on this PC: needs {FilePane.SizeText(reply.Sequence)}, has {FilePane.SizeText(free)}.");
+        }
         return await FileLink.Receive(c,FileNames.Unique(localFolder,reply.Name!),reply.Sequence,progress,token);
     }
     /// <summary>Creates a folder in the host's receive folder; a top-level name comes back unique ("Album (2)"). Returns the folder's path relative to the receive folder.</summary>
@@ -189,7 +216,6 @@ public sealed class FileClient(Connection c) : IDisposable
     public async Task<string> Put(string localPath,IProgress<long>? progress,CancellationToken token,string? remoteName=null,string? remoteFolder=null)
     {
         await using var stream=new FileStream(localPath,FileMode.Open,FileAccess.Read,FileShare.Read,FilePolicy.ChunkBytes,FileOptions.Asynchronous|FileOptions.SequentialScan);
-        if(stream.Length>FilePolicy.MaxFileBytes) throw new InvalidOperationException("Files over 2 GiB cannot be copied.");
         await c.Send(new("put",Name:remoteName??Path.GetFileName(localPath),Sequence:stream.Length,Text:remoteFolder),token);
         Expect(await c.Read(token),"go");
         await FileLink.Send(c,stream,stream.Length,progress,token);

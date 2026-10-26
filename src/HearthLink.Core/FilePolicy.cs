@@ -2,7 +2,6 @@ namespace HearthLink.Core;
 public static class FilePolicy
 {
     public const int ChunkBytes=64*1024;
-    public const long MaxFileBytes=2L*1024*1024*1024;
     public static bool ValidName(string name)
     {
         if(string.IsNullOrWhiteSpace(name) || name.Length>200 || name is "." or ".." || name.EndsWith('.') || name.EndsWith(' ')) return false;

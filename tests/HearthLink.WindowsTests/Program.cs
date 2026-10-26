@@ -109,6 +109,7 @@ try
         await FileChecks.RunStrip(fixture.Window,host,controller,root,Check);
         await FileChecks.Run(root,Check);
         await FileChecks.RunReconnect(host,controller,root,Check);
+        await FileChecks.RunLimits(host,controller,root,Check);
         await FileChecks.RunSessions(fixture.Window,host,controller,Path.Combine(root,"host-receive"),root,Check);
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {

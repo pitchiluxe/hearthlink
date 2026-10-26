@@ -111,6 +111,47 @@ static class FileChecks
         try { second=await remote.List(Path.Combine(folder,"Inner")); } catch(Exception e) { failure=e.GetType().Name+": "+e.Message; }
         check(first.Entries.Any(e=>e.Name=="Inner") && second?.Folder==Path.Combine(folder,"Inner") && opened==2,"remote pane reconnects once when its connection was dropped"+(failure==null?"":" ("+failure+")"));
     }
+    /// <summary>No fixed size cap: big files start copying, a full disk is refused up front, and big folders list completely.</summary>
+    public static async Task RunLimits(IdentityStore host,IdentityStore controller,string root,Action<bool,string> check)
+    {
+        string source=Path.Combine(root,"limits-source"), local=Path.Combine(root,"limits-local"), receive=Path.Combine(root,"limits-receive");
+        Directory.CreateDirectory(source); Directory.CreateDirectory(local);
+        async Task<(FileClient Client,Connection Host)> Open(Func<string,long>? hostFree=null,Func<string,long>? localFree=null)
+        {
+            var (c,h)=await Linked(host,controller); _=new FileHost(receive,hostFree).Serve(h,CancellationToken.None); return (new FileClient(c,localFree),h);
+        }
+        // A sparse 3 GiB file takes no disk space; it must start copying instead of being refused.
+        string huge=Path.Combine(source,"huge.bin");
+        using(var stream=new FileStream(huge,FileMode.Create)) stream.SetLength(3L*1024*1024*1024);
+        {
+            var (client,hostEnd)=await Open(); using var stop=new CancellationTokenSource(); long got=0; bool cancelled=false;
+            try { await client.Get(huge,local,new Progress(v=> { got=v; if(v>=FileLink.Window) stop.Cancel(); }),stop.Token); } catch(OperationCanceledException) { cancelled=true; }
+            client.Dispose(); hostEnd.Dispose();
+            check(cancelled && got>=FileLink.Window && !File.Exists(Path.Combine(local,"huge.bin")) && !Directory.EnumerateFiles(local,"*.partial").Any(),"files over 2 GiB are copied, not refused");
+        }
+        File.Delete(huge);
+        string small=Path.Combine(source,"report.pdf"); RandomFile(small,3*1024*1024);
+        {
+            var (client,hostEnd)=await Open(hostFree:_=>1024*1024);
+            string? message=null; try { await client.Put(small,null,CancellationToken.None); } catch(InvalidOperationException e) { message=e.Message; }
+            client.Dispose(); hostEnd.Dispose();
+            check(message!=null && message.Contains("free space") && (!Directory.Exists(receive) || !Directory.EnumerateFiles(receive).Any()),"a copy to a PC without enough free space is refused up front"+(message==null?"":" ("+message+")"));
+        }
+        {
+            var (client,hostEnd)=await Open(localFree:_=>1024*1024);
+            string? message=null; try { await client.Get(small,local,null,CancellationToken.None); } catch(InvalidOperationException e) { message=e.Message; }
+            client.Dispose(); hostEnd.Dispose();
+            check(message!=null && message.Contains("free space") && !File.Exists(Path.Combine(local,"report.pdf")),"a copy to this PC without enough free space is refused up front"+(message==null?"":" ("+message+")"));
+        }
+        string crowded=Path.Combine(root,"crowded"); Directory.CreateDirectory(crowded);
+        for(int i=0;i<11000;i++) File.Create(Path.Combine(crowded,$"f{i:D5}.txt")).Dispose();
+        {
+            var (client,hostEnd)=await Open();
+            var listing=await client.List(crowded,CancellationToken.None);
+            client.Dispose(); hostEnd.Dispose();
+            check(listing.Entries.Count==11000 && listing.Entries.Select(e=>e.Name).Distinct().Count()==11000 && FileHost.Read(crowded).Entries.Length==11000,"folders with more than 5,000 items list completely on both sides");
+        }
+    }
     static byte[] RandomFile(string path,int bytes) { var data=RandomNumberGenerator.GetBytes(bytes); File.WriteAllBytes(path,data); return data; }
     public static async Task Run(string root,Action<bool,string> check)
     {
@@ -162,11 +203,7 @@ static class FileChecks
                 string locked=Path.Combine(source,"locked.txt"); File.WriteAllText(locked,"busy");
                 bool lockedDenied=false;
                 using(new FileStream(locked,FileMode.Open,FileAccess.ReadWrite,FileShare.None)) { try { await client.Get(locked,local,null,lifetime.Token); } catch(InvalidOperationException) { lockedDenied=true; } }
-                string huge=Path.Combine(source,"huge.bin");
-                using(var stream=new FileStream(huge,FileMode.Create)) stream.SetLength(FilePolicy.MaxFileBytes+1);
-                bool hugeDenied=false; try { await client.Get(huge,local,null,lifetime.Token); } catch(InvalidOperationException) { hugeDenied=true; }
-                File.Delete(huge);
-                check(lockedDenied && hugeDenied && !File.Exists(Path.Combine(local,"locked.txt")) && !File.Exists(Path.Combine(local,"huge.bin")),"get refuses an oversized or unreadable file");
+                check(lockedDenied && !File.Exists(Path.Combine(local,"locked.txt")),"get refuses an unreadable file");
 
                 string trip=Path.Combine(source,"Trip"); Directory.CreateDirectory(Path.Combine(trip,"Day 1")); Directory.CreateDirectory(Path.Combine(trip,"Empty"));
                 File.WriteAllText(Path.Combine(trip,"cover.jpg"),"cover"); File.WriteAllText(Path.Combine(trip,"Day 1","beach.jpg"),"beach!");
