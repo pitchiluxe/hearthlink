@@ -8,7 +8,8 @@ using System.Security.Cryptography.X509Certificates;
 namespace HearthLink;
 public sealed class Connection : IDisposable
 {
-    public const int Port=45831;
+    /// <summary>TCP port for direct connections. Always 45831 in the app; the Windows checks move it to a free port so they can run beside an installed HearthLink.</summary>
+    public static int Port { get; set; }=45831;
     public readonly SslStream Stream;
     readonly Stream transport;
     readonly SemaphoreSlim write=new(1,1);

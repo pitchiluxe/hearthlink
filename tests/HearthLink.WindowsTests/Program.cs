@@ -19,6 +19,7 @@ static async Task<(RelayStream Client,RelayStream Server)> RelayPair()
     }
     finally { tcpListener.Stop(); }
 }
+{ var free=new TcpListener(IPAddress.Loopback,0); free.Start(); Connection.Port=((IPEndPoint)free.LocalEndpoint).Port; free.Stop(); }
 var root=Path.Combine(Path.GetTempPath(),"HearthLink-tests-"+Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
 int passed=0;

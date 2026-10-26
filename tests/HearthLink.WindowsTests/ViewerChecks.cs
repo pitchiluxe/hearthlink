@@ -29,5 +29,16 @@ static class ViewerChecks
         await window.OnUi(()=> { viewer.Close(); return true; });
         hostEnd.Dispose();
         check(acked.SequenceEqual([1L,2L,3L]),"a minimized viewer still acknowledges every frame");
+
+        bool ended=false;
+        var notice=await window.OnUi(()=> { var n=new SessionNotice("TECHNOBIZ-ASUS",true,()=>ended=true,TimeSpan.FromMilliseconds(300)); n.Show(); return n; });
+        bool fullAtStart=await window.OnUi(()=>!notice.Collapsed && notice.Height>100);
+        await Task.Delay(1000);
+        var collapsed=await window.OnUi(()=>(notice.Collapsed,notice.Visible,notice.TopMost,notice.Height,notice.Bounds));
+        var area=Screen.PrimaryScreen!.WorkingArea;
+        check(fullAtStart && collapsed.Collapsed && collapsed.Visible && collapsed.TopMost && collapsed.Height<=40 && area.Contains(collapsed.Bounds),"session notice collapses to a small tab that stays on screen and on top");
+        bool expanded=await window.OnUi(()=> { notice.Expand(); return !notice.Collapsed && notice.Height>100; });
+        await window.OnUi(()=> { notice.EndButton.PerformClick(); notice.CloseAfterSession(); return true; });
+        check(expanded && ended,"the collapsed tab expands back to End session");
     }
 }
