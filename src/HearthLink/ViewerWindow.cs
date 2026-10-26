@@ -7,17 +7,14 @@ public sealed class Viewer : Form
     readonly Connection connection;
     sealed class RemoteScreen : PictureBox
     {
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-        internal long Sequence {get;set;}
-        long presented;
         public event Action<long>? Presented;
         public RemoteScreen() {SetStyle(ControlStyles.Selectable|ControlStyles.OptimizedDoubleBuffer,true); TabStop=true;}
         protected override bool IsInputKey(Keys keyData)=>true;
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            if(Sequence>presented && Image!=null) {presented=Sequence; Presented?.Invoke(presented);}
-        }
+        /// <summary>
+        /// Shows a decoded frame and reports it presented at once. Waiting for a paint would stall the session whenever the
+        /// viewer is minimized or covered (Windows sends no paint then), and the host stops after 8 s without acknowledgements.
+        /// </summary>
+        public void ShowFrame(Image image,long sequence) { var old=Image; Image=image; old?.Dispose(); Invalidate(); Presented?.Invoke(sequence); }
     }
     readonly RemoteScreen screen=new() {Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,BackColor=Color.Black};
     readonly Label status=new() {ForeColor=Color.White,AutoEllipsis=true,Width=310,Height=38,Padding=new(8)};
@@ -25,7 +22,7 @@ public sealed class Viewer : Form
     readonly InputMailbox outbound=new();
     readonly bool control;
     readonly Stopwatch counter=Stopwatch.StartNew();
-    int desiredMonitor,paintedFrames;
+    int desiredMonitor,shownFrames;
     VideoFrame? current;
     bool full;
     Rectangle previous;
@@ -37,7 +34,7 @@ public sealed class Viewer : Form
     // Open while a file dialog or browser is up, so the toolbar does not slide away under it.
     bool holdBar, menuOpen;
     TransferStrip? transfers;
-    RemoteFilesWindow? remoteFiles;
+    FileManagerWindow? fileManager;
     public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null)
     {
         connection=c; control=allowControl;
@@ -59,13 +56,13 @@ public sealed class Viewer : Form
                 holdBar=true; bool chosen=pick.ShowDialog(this)==DialogResult.OK; holdBar=false;
                 if(chosen) await strip.Send(pick.FileNames);
             };
-            var get=Brand.Style(new Button {Text="Get files",AutoSize=true});
+            var get=Brand.Style(new Button {Text="File transfer",AutoSize=true});
             get.Click+=(_,_)=>
             {
-                if(remoteFiles is {IsDisposed:false}) { remoteFiles.Activate(); return; }
-                remoteFiles=new RemoteFilesWindow(name,openFiles,strip.Get); holdBar=true;
-                remoteFiles.FormClosed+=(_,_)=> { remoteFiles=null; holdBar=false; };
-                remoteFiles.Show(this);
+                if(fileManager is {IsDisposed:false}) { fileManager.Activate(); return; }
+                fileManager=new FileManagerWindow(name,openFiles);
+                fileManager.FormClosed+=(_,_)=>fileManager=null;
+                fileManager.Show(this);
             };
             bar.Controls.AddRange([send,get]);
             // Files dragged from Explorer onto the remote screen are sent like Send files.
@@ -104,16 +101,16 @@ public sealed class Viewer : Form
         screen.LostFocus+=(_,_)=>Post(new("release")); Deactivate+=(_,_)=>Post(new("release"));
         screen.Presented+=sequence=>
         {
-            Post(new("presented",Sequence:sequence)); paintedFrames++;
+            Post(new("presented",Sequence:sequence)); shownFrames++;
             if(counter.Elapsed.TotalSeconds>=1 && current!=null)
             {
-                double fps=paintedFrames/counter.Elapsed.TotalSeconds;
+                double fps=shownFrames/counter.Elapsed.TotalSeconds;
                 double stages=(current.CaptureMicroseconds+current.EncodeMicroseconds)/1000d;
                 status.Text=$"{fps:F0} fps • host {stages:F0} ms • round trip {current.RoundTripMilliseconds} ms • {route}";
-                paintedFrames=0; counter.Restart();
+                shownFrames=0; counter.Restart();
             }
         };
-        FormClosed+=(_,_)=> {barTimer.Dispose(); transfers?.Cancel(); remoteFiles?.Close(); stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
+        FormClosed+=(_,_)=> {barTimer.Dispose(); transfers?.Cancel(); fileManager?.Close(); stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
         Shown+=async(_,_)=>
         {
             var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); connection.Dispose();
@@ -186,7 +183,7 @@ public sealed class Viewer : Form
                     await this.InvokeAsync(()=>
                     {
                         if(IsDisposed || stop.IsCancellationRequested) return;
-                        var old=screen.Image; screen.Sequence=frame.Sequence; current=frame; screen.Image=bitmap; transferred=true; old?.Dispose(); screen.Invalidate();
+                        current=frame; transferred=true; screen.ShowFrame(bitmap,frame.Sequence);
                     },stop.Token).ConfigureAwait(false);
                 }
                 finally {if(!transferred) bitmap.Dispose();}

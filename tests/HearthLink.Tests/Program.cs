@@ -99,6 +99,9 @@ Check(FilePolicy.ValidName("Project report.pdf"),"ordinary file name accepted");
     Check(FileNames.SplitRelative("Album\\2026\\photo.jpg").SequenceEqual(["Album","2026","photo.jpg"]) && FileNames.SplitRelative("notes.txt").SequenceEqual(["notes.txt"]),"relative paths split into safe segments");
     bool Refused(string path) { try { FileNames.SplitRelative(path); return false; } catch(InvalidDataException) { return true; } }
     Check(Refused("Album\\..\\x.txt") && Refused("..\\x.txt") && Refused("C:\\x.txt") && Refused("\\x.txt") && Refused("Album\\\\x.txt") && Refused("Album/x.txt") && Refused("") && Refused(string.Join("\\",Enumerable.Repeat("d",33))),"relative paths cannot escape, be absolute, be empty or nest too deep");
+    var drives=FileNames.DecodeDrives(FileNames.EncodeDrives([new("C:\\","Storage",27_400_000_000,465_700_000_000),new("D:\\","",677_700_000_000,919_700_000_000)])+"");
+    Check(drives.Count==2 && drives[0]==new DriveEntry("C:\\","Storage",27_400_000_000,465_700_000_000) && drives[1].Root=="D:\\","drive list with free space round trips");
+    Check(FileNames.DecodeDrives("[{\"Root\":\"C:\\\\Windows\",\"Label\":\"\",\"Free\":1,\"Total\":2},{\"Root\":\"E:\\\\\",\"Label\":\"\",\"Free\":-1,\"Total\":2}]").Count==0 && FileNames.DecodeDrives("not json").Count==0,"drive list drops entries that are not drive roots");
     var when=new DateTimeOffset(2026,10,25,12,0,0,TimeSpan.Zero);
     string json=FileNames.Encode([new("a.txt",false,12,when),new("Docs",true,0,when)]).Replace("]",",{\"Name\":\"..\\\\evil\",\"Folder\":false,\"Size\":1,\"Modified\":\"2026-10-25T12:00:00+00:00\"}]");
     var entries=FileNames.Decode(json);

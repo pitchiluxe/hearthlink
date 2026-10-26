@@ -65,7 +65,7 @@ public sealed class FileHost(string receiveFolder)
                     case "list": await c.Send(List(request.Text??""),lifetime); break;
                     case "get": await Get(c,request.Text??"",lifetime); break;
                     case "put": await Put(c,request,lifetime); break;
-                    case "folder": await Folder(c,request.Name??"",lifetime); break;
+                    case "folder": await Folder(c,request,lifetime); break;
                     default: return;
                 }
             }
@@ -74,24 +74,36 @@ public sealed class FileHost(string receiveFolder)
         finally { c.Dispose(); }
     }
     static Packet Denied(string text)=>new("denied",Text:text);
+    /// <summary>This PC's ready drives with label and space, for the file manager's drive bar.</summary>
+    public static IEnumerable<DriveEntry> Drives()
+    {
+        foreach(var d in DriveInfo.GetDrives())
+        {
+            DriveEntry? entry=null;
+            try { if(d.IsReady) entry=new(d.RootDirectory.FullName,d.VolumeLabel,d.AvailableFreeSpace,d.TotalSize); } catch(Exception e) when(e is IOException or UnauthorizedAccessException) { }
+            if(entry!=null) yield return entry;
+        }
+    }
     static Packet List(string folder)
     {
         string? drives=null;
         if(folder.Length==0)
         {
             folder=Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            drives=string.Join("|",DriveInfo.GetDrives().Where(d=>d.IsReady).Select(d=>d.RootDirectory.FullName));
+            drives=FileNames.EncodeDrives(Drives());
         }
         if(!Path.IsPathFullyQualified(folder) || !Directory.Exists(folder)) return Denied("That folder no longer exists.");
-        try
-        {
-            var options=new EnumerationOptions {IgnoreInaccessible=true,AttributesToSkip=FileAttributes.Hidden|FileAttributes.System};
-            var entries=new DirectoryInfo(folder).EnumerateFileSystemInfos("*",options).Where(i=>FilePolicy.ValidName(i.Name))
-                .Select(i=>new FileEntry(i.Name,i is DirectoryInfo,i is FileInfo f?f.Length:0,i.LastWriteTimeUtc))
-                .OrderByDescending(e=>e.Folder).ThenBy(e=>e.Name,StringComparer.OrdinalIgnoreCase).Take(FileNames.MaxEntries);
-            return new("listing",Text:Path.GetFullPath(folder),Data:FileNames.Encode(entries),Code:drives);
-        }
+        try { var (full,entries)=Read(folder); return new("listing",Text:full,Data:FileNames.Encode(entries),Code:drives); }
         catch(Exception e) when(e is UnauthorizedAccessException or IOException) { return Denied("This PC's Windows account cannot open that folder."); }
+    }
+    /// <summary>A folder's entries as both file manager panes show them: folders first, then by name; hidden and system items left out.</summary>
+    public static (string Folder,FileEntry[] Entries) Read(string folder)
+    {
+        var options=new EnumerationOptions {IgnoreInaccessible=true,AttributesToSkip=FileAttributes.Hidden|FileAttributes.System};
+        var entries=new DirectoryInfo(folder).EnumerateFileSystemInfos("*",options).Where(i=>FilePolicy.ValidName(i.Name))
+            .Select(i=>new FileEntry(i.Name,i is DirectoryInfo,i is FileInfo f?f.Length:0,i.LastWriteTimeUtc))
+            .OrderByDescending(e=>e.Folder).ThenBy(e=>e.Name,StringComparer.OrdinalIgnoreCase).Take(FileNames.MaxEntries).ToArray();
+        return (Path.GetFullPath(folder),entries);
     }
     static async Task Get(Connection c,string path,CancellationToken token)
     {
@@ -108,45 +120,55 @@ public sealed class FileHost(string receiveFolder)
             await FileLink.Send(c,stream,stream.Length,null,token);
         }
     }
-    /// <summary>The receive folder joined with a relative path from the other PC, or null if any segment is unsafe or the result would leave the receive folder.</summary>
-    string? Inside(string relative)
+    /// <summary>
+    /// Where a put or folder lands: the folder the controller picked in its file manager (Text: an existing absolute folder,
+    /// written as this PC's signed-in user) or, if none, the receive folder. Null when the pick is not an existing absolute folder.
+    /// </summary>
+    string? Base(Packet request)
+    {
+        if(string.IsNullOrEmpty(request.Text)) { Directory.CreateDirectory(receiveFolder); return Path.GetFullPath(receiveFolder); }
+        return Path.IsPathFullyQualified(request.Text) && Directory.Exists(request.Text) ? Path.GetFullPath(request.Text) : null;
+    }
+    /// <summary><paramref name="root"/> joined with a relative path from the other PC, or null if any segment is unsafe or the result would leave <paramref name="root"/>.</summary>
+    static string? Inside(string root,string relative)
     {
         string[] segments; try { segments=FileNames.SplitRelative(relative); } catch(InvalidDataException) { return null; }
-        string root=Path.GetFullPath(receiveFolder), full=Path.GetFullPath(Path.Combine([root,..segments]));
+        string full=Path.GetFullPath(Path.Combine([root,..segments]));
         return full.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase) ? full : null;
     }
-    string Relative(string full)=>Path.GetRelativePath(Path.GetFullPath(receiveFolder),full);
     /// <summary>Creates a folder for a sent folder tree. A single-segment (top) folder gets a unique name so a second copy never merges into the first.</summary>
-    async Task Folder(Connection c,string relative,CancellationToken token)
+    async Task Folder(Connection c,Packet request,CancellationToken token)
     {
-        if(Inside(relative) is not {} full) { await c.Send(Denied("That folder name is not allowed."),token); return; }
-        if(!relative.Contains('\\')) { Directory.CreateDirectory(receiveFolder); full=FileNames.Unique(receiveFolder,relative); }
+        string relative=request.Name??"";
+        if(Base(request) is not {} root) { await c.Send(Denied("That folder no longer exists on this PC."),token); return; }
+        if(Inside(root,relative) is not {} full) { await c.Send(Denied("That folder name is not allowed."),token); return; }
+        if(!relative.Contains('\\')) full=FileNames.Unique(root,relative);
         Directory.CreateDirectory(full);
-        await c.Send(new("folder-ok",Name:Relative(full)),token);
+        await c.Send(new("folder-ok",Name:Path.GetRelativePath(root,full)),token);
     }
     async Task Put(Connection c,Packet request,CancellationToken token)
     {
         string name=request.Name??""; long length=request.Sequence;
+        if(Base(request) is not {} root) { await c.Send(Denied("That folder no longer exists on this PC."),token); return; }
         // A name may be a path inside a folder the controller created with "folder" ("Album\2026\photo.jpg").
-        if(Inside(name) is not {} target) { await c.Send(Denied("That file name is not allowed."),token); return; }
+        if(Inside(root,name) is not {} target) { await c.Send(Denied("That file name is not allowed."),token); return; }
         if(length<0 || length>FilePolicy.MaxFileBytes) { await c.Send(Denied("Files over 2 GiB cannot be copied."),token); return; }
         string folder=Path.GetDirectoryName(target)!;
         Directory.CreateDirectory(folder);
         string destination=FileNames.Unique(folder,Path.GetFileName(target));
         await c.Send(new("go"),token);
         string saved=await FileLink.Receive(c,destination,length,null,token);
-        await c.Send(new("saved",Name:Relative(saved)),token);
+        await c.Send(new("saved",Name:Path.GetRelativePath(root,saved)),token);
     }
 }
 /// <summary>Controller side of a files connection. One operation at a time; after a cancelled or failed transfer, open a new connection.</summary>
 public sealed class FileClient(Connection c) : IDisposable
 {
-    public async Task<(string Folder,IReadOnlyList<FileEntry> Entries,string[] Drives)> List(string folder,CancellationToken token)
+    public async Task<(string Folder,IReadOnlyList<FileEntry> Entries,IReadOnlyList<DriveEntry> Drives)> List(string folder,CancellationToken token)
     {
         await c.Send(new("list",Text:folder),token);
         var reply=Expect(await c.Read(token),"listing");
-        string[] drives=(reply.Code??"").Split('|',StringSplitOptions.RemoveEmptyEntries).Where(d=>d.Length==3 && char.IsAsciiLetter(d[0]) && d[1..]==":\\").ToArray();
-        return (reply.Text??"",FileNames.Decode(reply.Data??"[]"),drives);
+        return (reply.Text??"",FileNames.Decode(reply.Data??"[]"),reply.Code==null?[]:FileNames.DecodeDrives(reply.Code));
     }
     /// <summary>Copies a host file into <paramref name="localFolder"/> under a name that overwrites nothing; returns the saved path.</summary>
     public async Task<string> Get(string remotePath,string localFolder,IProgress<long>? progress,CancellationToken token)
@@ -158,17 +180,17 @@ public sealed class FileClient(Connection c) : IDisposable
         return await FileLink.Receive(c,FileNames.Unique(localFolder,reply.Name!),reply.Sequence,progress,token);
     }
     /// <summary>Creates a folder in the host's receive folder; a top-level name comes back unique ("Album (2)"). Returns the folder's path relative to the receive folder.</summary>
-    public async Task<string> Folder(string relative,CancellationToken token)
+    public async Task<string> Folder(string relative,CancellationToken token,string? remoteFolder=null)
     {
-        await c.Send(new("folder",Name:relative),token);
+        await c.Send(new("folder",Name:relative,Text:remoteFolder),token);
         return Expect(await c.Read(token),"folder-ok").Name??"";
     }
     /// <summary>Sends a local file to the host's receive folder, optionally to a path inside a folder made with <see cref="Folder"/>; returns the relative name it was saved under.</summary>
-    public async Task<string> Put(string localPath,IProgress<long>? progress,CancellationToken token,string? remoteName=null)
+    public async Task<string> Put(string localPath,IProgress<long>? progress,CancellationToken token,string? remoteName=null,string? remoteFolder=null)
     {
         await using var stream=new FileStream(localPath,FileMode.Open,FileAccess.Read,FileShare.Read,FilePolicy.ChunkBytes,FileOptions.Asynchronous|FileOptions.SequentialScan);
         if(stream.Length>FilePolicy.MaxFileBytes) throw new InvalidOperationException("Files over 2 GiB cannot be copied.");
-        await c.Send(new("put",Name:remoteName??Path.GetFileName(localPath),Sequence:stream.Length),token);
+        await c.Send(new("put",Name:remoteName??Path.GetFileName(localPath),Sequence:stream.Length,Text:remoteFolder),token);
         Expect(await c.Read(token),"go");
         await FileLink.Send(c,stream,stream.Length,progress,token);
         return Expect(await c.Read(token),"saved").Name??"";

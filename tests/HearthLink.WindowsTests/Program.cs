@@ -104,6 +104,8 @@ try
     {
         await UpdateUiChecks.Run(fixture.Window,host,Check);
         Check(DesktopCapture.Profile(2)==(8192,8192,75,30) && DesktopCapture.Profile(3)==(8192,8192,85,30) && DesktopCapture.Profile(4)==(8192,8192,95,30) && DesktopCapture.Profiles.SequenceEqual(["Responsive","Balanced","Full detail","Sharp","Best"]),"Sharp and Best profiles send full resolution at quality 85 and 95");
+        await ViewerChecks.Run(fixture.Window,host,controller,Check);
+        await FileChecks.RunStrip(fixture.Window,host,controller,root,Check);
         await FileChecks.Run(root,Check);
         await FileChecks.RunSessions(fixture.Window,host,controller,Path.Combine(root,"host-receive"),root,Check);
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))

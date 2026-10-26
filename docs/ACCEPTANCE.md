@@ -52,6 +52,7 @@ Two PCs (Task 9):
 ## File transfer
 
 - [ ] In a control session, **Send files** with three files. Each appears in the host's `Downloads\HearthLink`; the strip shows progress, then "Sent 3 files".
+- [ ] **File transfer** opens two panes, local left and remote right. The remote drive dropdown lists every drive of the other PC with free space; pick another drive and a folder. F5 copies selected files and folders each way into the folder open in the other pane, keeping subfolders; F7 makes a folder on either side. The viewer session keeps running while this window covers it. (One-PC check 2026-10-26: both panes, drive dropdown and covered-viewer session confirmed on screen.)
 - [ ] **Get files** opens the host's user folder and lists drives. Open a subfolder, go Up, download two files. They appear in this PC's `Downloads\HearthLink`; **Open folder** shows them.
 - [ ] Drag three files from Explorer onto the remote screen: all three arrive. Drag a folder with subfolders (one empty): the same tree appears in the other PC's `Downloads\HearthLink`; dragging it again creates `name (2)`. (One-PC checks 2026-10-25: three files, then a folder tree with an empty subfolder plus a loose file, dragged onto a test viewer, arrived complete with exact sizes.)
 - [ ] The display and quality menu buttons open and switch; quality offers Responsive, Balanced, Full detail, Sharp and Best.

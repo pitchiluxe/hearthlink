@@ -79,6 +79,25 @@ static class FileChecks
         await viewOnly.Send(new("disconnect")); viewOnly.Dispose(); await viewReader;
         await Task.Delay(500);
     }
+    /// <summary>The file manager's copy engine on the real UI thread: folder trees both ways into chosen folders, never overwriting.</summary>
+    public static async Task RunStrip(MainWindow window,IdentityStore host,IdentityStore controller,string root,Action<bool,string> check)
+    {
+        string near=Path.Combine(root,"strip-local"), far=Path.Combine(root,"strip-remote"), tree=Path.Combine(near,"Trip");
+        Directory.CreateDirectory(Path.Combine(tree,"Day 1")); Directory.CreateDirectory(Path.Combine(tree,"Empty")); Directory.CreateDirectory(far);
+        File.WriteAllText(Path.Combine(tree,"cover.jpg"),"cover"); File.WriteAllText(Path.Combine(tree,"Day 1","beach.jpg"),"beach!"); File.WriteAllText(Path.Combine(near,"loose.txt"),"x");
+        async Task<Connection> Open(CancellationToken t) { var (c,h)=await Linked(host,controller); _=new FileHost(Path.Combine(root,"strip-unused")).Serve(h,CancellationToken.None); return c; }
+        bool Same(string a,string b)=>Directory.GetFiles(a,"*",SearchOption.AllDirectories).Select(f=>Path.GetRelativePath(a,f)+"="+File.ReadAllText(f)).Order().SequenceEqual(Directory.GetFiles(b,"*",SearchOption.AllDirectories).Select(f=>Path.GetRelativePath(b,f)+"="+File.ReadAllText(f)).Order())
+            && Directory.GetDirectories(a,"*",SearchOption.AllDirectories).Select(d=>Path.GetRelativePath(a,d)).Order().SequenceEqual(Directory.GetDirectories(b,"*",SearchOption.AllDirectories).Select(d=>Path.GetRelativePath(b,d)).Order());
+        var strip=await window.OnUi(()=>new TransferStrip(Open));
+        await (await window.OnUi(()=>strip.Send([tree,Path.Combine(near,"loose.txt")],far)));
+        await (await window.OnUi(()=>strip.Send([tree],far)));
+        check(Same(tree,Path.Combine(far,"Trip")) && Same(tree,Path.Combine(far,"Trip (2)")) && File.ReadAllText(Path.Combine(far,"loose.txt"))=="x","copy to the remote pane recreates folder trees in its folder");
+        string back=Path.Combine(root,"strip-back"); Directory.CreateDirectory(back);
+        await (await window.OnUi(()=>strip.Get([(Path.Combine(far,"Trip"),true,0L),(Path.Combine(far,"loose.txt"),false,1L)],back)));
+        await (await window.OnUi(()=>strip.Get([(Path.Combine(far,"Trip"),true,0L)],back)));
+        check(Same(tree,Path.Combine(back,"Trip")) && Same(tree,Path.Combine(back,"Trip (2)")) && File.ReadAllText(Path.Combine(back,"loose.txt"))=="x","copy to the local pane recreates remote folder trees in its folder");
+        await window.OnUi(()=> { strip.Dispose(); return true; });
+    }
     static byte[] RandomFile(string path,int bytes) { var data=RandomNumberGenerator.GetBytes(bytes); File.WriteAllBytes(path,data); return data; }
     public static async Task Run(string root,Action<bool,string> check)
     {
@@ -115,6 +134,14 @@ static class FileChecks
                 string nested=await client.Folder("Album\\2026\\Empty",lifetime.Token);
                 string inFolder=await client.Put(sent,null,lifetime.Token,"Album\\2026\\report.pdf");
                 check(nested=="Album\\2026\\Empty" && Directory.Exists(Path.Combine(receive,"Album","2026","Empty")) && inFolder=="Album\\2026\\report.pdf" && File.ReadAllBytes(Path.Combine(receive,"Album","2026","report.pdf")).SequenceEqual(data),"files and empty subfolders keep their place inside a sent folder");
+                string chosen=Path.Combine(root,"chosen-folder"); Directory.CreateDirectory(chosen);
+                string intoChosen=await client.Put(sent,null,lifetime.Token,null,chosen), intoChosenAgain=await client.Put(sent,null,lifetime.Token,null,chosen);
+                string chosenAlbum=await client.Folder("Album",lifetime.Token,chosen);
+                check(intoChosen=="report.pdf" && intoChosenAgain=="report (2).pdf" && File.ReadAllBytes(Path.Combine(chosen,"report.pdf")).SequenceEqual(data) && chosenAlbum=="Album" && Directory.Exists(Path.Combine(chosen,"Album")),"put and folder go into a chosen host folder without overwriting");
+                bool relativeBase=false, missingBase=false;
+                try { await client.Put(sent,null,lifetime.Token,null,"chosen-folder"); } catch(InvalidOperationException) { relativeBase=true; }
+                try { await client.Put(sent,null,lifetime.Token,null,Path.Combine(root,"no-such-folder")); } catch(InvalidOperationException) { missingBase=true; }
+                check(relativeBase && missingBase && !Directory.Exists(Path.Combine(root,"no-such-folder")),"a chosen host folder must be an existing absolute folder");
                 string hostFile=Path.Combine(source,"photo.jpg"); byte[] photo=RandomFile(hostFile,2*1024*1024+512*1024);
                 string got=await client.Get(hostFile,local,null,lifetime.Token);
                 check(got==Path.Combine(local,"photo.jpg") && File.ReadAllBytes(got).SequenceEqual(photo),"get copies a host file");
@@ -128,13 +155,18 @@ static class FileChecks
                 File.Delete(huge);
                 check(lockedDenied && hugeDenied && !File.Exists(Path.Combine(local,"locked.txt")) && !File.Exists(Path.Combine(local,"huge.bin")),"get refuses an oversized or unreadable file");
 
+                string trip=Path.Combine(source,"Trip"); Directory.CreateDirectory(Path.Combine(trip,"Day 1")); Directory.CreateDirectory(Path.Combine(trip,"Empty"));
+                File.WriteAllText(Path.Combine(trip,"cover.jpg"),"cover"); File.WriteAllText(Path.Combine(trip,"Day 1","beach.jpg"),"beach!");
+                var remote=await TransferStrip.ExpandRemote(client,[(trip,true,0L),(hostFile,false,(long)photo.Length)],lifetime.Token);
+                check(remote.Select(i=>i.Relative).SequenceEqual(["","cover.jpg","Day 1","Day 1\\beach.jpg","Empty","photo.jpg"]) && remote.Select(i=>i.Remote==null).SequenceEqual([true,false,true,false,true,false])
+                    && remote[3].Remote==Path.Combine(trip,"Day 1","beach.jpg") && remote[3].Size==6 && remote.Take(5).All(i=>i.RootName=="Trip" && i.Root==0) && remote[5].Root==-1,"a picked host folder expands into its folders and files, folder first");
                 bool missing=false; try { await client.List(Path.Combine(source,"gone"),lifetime.Token); } catch(InvalidOperationException) { missing=true; }
                 check(missing,"list of a missing folder is refused");
                 Directory.CreateDirectory(Path.Combine(source,"Docs"));
                 var listing=await client.List(source,lifetime.Token);
                 check(listing.Folder==source && listing.Entries.Any(e=>e.Name=="Docs" && e.Folder) && listing.Entries.Any(e=>e.Name=="photo.jpg" && !e.Folder && e.Size==photo.Length),"list shows a folder");
                 var roots=await client.List("",lifetime.Token);
-                check(roots.Folder==Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) && roots.Drives.Contains(Path.GetPathRoot(Environment.SystemDirectory)!),"start listing is the user profile with the drives");
+                check(roots.Folder==Environment.GetFolderPath(Environment.SpecialFolder.UserProfile) && roots.Drives.Any(d=>d.Root==Path.GetPathRoot(Environment.SystemDirectory) && d.Total>0 && d.Free<=d.Total),"start listing is the user profile with the drives");
             }
             await serving.WaitAsync(TimeSpan.FromSeconds(10));
         }

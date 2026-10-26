@@ -2,8 +2,19 @@ using System.Text.Json;
 namespace HearthLink.Core;
 /// <summary>One item of a remote folder listing. Names come from the other PC and are checked with <see cref="FilePolicy.ValidName"/>.</summary>
 public sealed record FileEntry(string Name,bool Folder,long Size,DateTimeOffset Modified);
+/// <summary>A ready drive on a PC, as shown in the file manager's drive bar ("C:\", label, free and total bytes).</summary>
+public sealed record DriveEntry(string Root,string Label,long Free,long Total);
 public static class FileNames
 {
+    public static string EncodeDrives(IEnumerable<DriveEntry> drives)=>JsonSerializer.Serialize(drives.Take(26));
+    /// <summary>Reads the other PC's drive list, keeping only plain drive roots ("C:\") with sane sizes.</summary>
+    public static IReadOnlyList<DriveEntry> DecodeDrives(string json)
+    {
+        DriveEntry[]? drives;
+        try { drives=JsonSerializer.Deserialize<DriveEntry[]>(json); } catch(JsonException) { return []; }
+        return (drives??[]).Where(d=>d?.Root is {Length:3} r && char.IsAsciiLetter(r[0]) && r[1..]==":\\" && d.Free>=0 && d.Total>=0)
+            .Select(d=>d with {Label=new string((d.Label??"").Where(c=>!char.IsControl(c)).Take(32).ToArray())}).Take(26).ToArray();
+    }
     public const int MaxEntries=5000;
     /// <summary>A path in <paramref name="folder"/> that does not exist yet: the name, then "stem (2).ext", "stem (3).ext"… so nothing is overwritten.</summary>
     public static string Unique(string folder,string name)
