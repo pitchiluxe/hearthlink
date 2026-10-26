@@ -312,7 +312,14 @@ public sealed class MainWindow : Form
             connectionProgress.Text="Connected to "+name;
             identity.Audit(host.Fingerprint,"outbound-connected");
             if(identity.UpgradeTrust(host.Fingerprint,null)) TrustChanged();
-            new Viewer(connection,name,control.Checked,reply.Monitors??["Display 1"],route).Show(this); connection=null;
+            string? fileGrant=reply.Code;
+            // Each files connection takes the route the session won, carrying the session's grant.
+            Func<CancellationToken,Task<Connection>>? openFiles=fileGrant==null?null:async token=>
+            {
+                var files=direct?await Connection.Connect(host.Address,identity,host.Fingerprint):await RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,token);
+                try { await files.Send(new("files",Code:fileGrant),token); return files; } catch { files.Dispose(); throw; }
+            };
+            new Viewer(connection,name,control.Checked,reply.Monitors??["Display 1"],route,openFiles).Show(this); connection=null;
         }
         finally { connection?.Dispose(); }
     }

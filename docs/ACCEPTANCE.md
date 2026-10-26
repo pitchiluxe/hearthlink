@@ -49,6 +49,16 @@ Two PCs (Task 9):
 - [ ] **Connect** goes through the relay; with the relay unreachable it falls back to the saved LAN address.
 - [ ] **Remove PC** on either side removes the other PC from both lists, and the relay stops showing it as Online to the removed PC.
 
+## File transfer
+
+- [ ] In a control session, **Send files** with three files. Each appears in the host's `Downloads\HearthLink`; the strip shows progress, then "Sent 3 files".
+- [ ] **Get files** opens the host's user folder and lists drives. Open a subfolder, go Up, download two files. They appear in this PC's `Downloads\HearthLink`; **Open folder** shows them.
+- [ ] Send a file with the same name twice: the host keeps both, the second as `name (2).ext`.
+- [ ] Start a 1 GB transfer and **Cancel**: the strip says "Transfer stopped" and neither PC keeps a partial file.
+- [ ] End the session from the host during a transfer: the transfer stops and no partial file remains.
+- [ ] A view-only session shows no file buttons.
+- [ ] Repeat one send and one get through the relay (PCs on different networks) and on a direct connection; record MB/s for each.
+
 ## Future release acceptance (not implemented; not passable yet)
 
 - [ ] Discovery displays real untrusted devices separately and grants no access.

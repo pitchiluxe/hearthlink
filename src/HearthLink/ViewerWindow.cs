@@ -34,7 +34,11 @@ public sealed class Viewer : Form
     readonly System.Windows.Forms.Timer barTimer=new() {Interval=150};
     readonly Stopwatch barIdle=new();
     TimeSpan barHold;
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay")
+    // Open while a file dialog or browser is up, so the toolbar does not slide away under it.
+    bool holdBar;
+    TransferStrip? transfers;
+    RemoteFilesWindow? remoteFiles;
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null)
     {
         connection=c; control=allowControl;
         Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(640,400); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
@@ -46,12 +50,35 @@ public sealed class Viewer : Form
         var fullscreen=Brand.Style(new Button {Text="Full screen",AutoSize=true}); fullscreen.Click+=(_,_)=>ToggleFull();
         var disconnect=Brand.Style(new Button {Text="Disconnect",AutoSize=true},true); disconnect.Click+=(_,_)=>Close();
         status.Text=(control?"Connected • Control":"Connected • View only")+" • "+route;
-        bar.Controls.AddRange([displays,profile,fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();
+        bar.Controls.AddRange([displays,profile]);
+        if(control && openFiles!=null)
+        {
+            var strip=transfers=new TransferStrip(openFiles);
+            var send=Brand.Style(new Button {Text="Send files",AutoSize=true});
+            send.Click+=async(_,_)=>
+            {
+                using var pick=new OpenFileDialog {Multiselect=true,Title="Send files to "+name};
+                holdBar=true; bool chosen=pick.ShowDialog(this)==DialogResult.OK; holdBar=false;
+                if(chosen) await strip.Send(pick.FileNames);
+            };
+            var get=Brand.Style(new Button {Text="Get files",AutoSize=true});
+            get.Click+=(_,_)=>
+            {
+                if(remoteFiles is {IsDisposed:false}) { remoteFiles.Activate(); return; }
+                remoteFiles=new RemoteFilesWindow(name,openFiles,strip.Get); holdBar=true;
+                remoteFiles.FormClosed+=(_,_)=> { remoteFiles=null; holdBar=false; };
+                remoteFiles.Show(this);
+            };
+            bar.Controls.AddRange([send,get]);
+        }
+        bar.Controls.AddRange([fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();
+        // Added after the screen so it docks first and the screen fills what is left.
+        if(transfers!=null) Controls.Add(transfers);
         Resize+=(_,_)=>PlaceBar(); bar.SizeChanged+=(_,_)=>PlaceBar();
         barTimer.Tick+=(_,_)=>
         {
             bool over=bar.Visible && bar.Bounds.Contains(PointToClient(Cursor.Position));
-            if(over || displays.DroppedDown || profile.DroppedDown) { barIdle.Restart(); return; }
+            if(over || holdBar || displays.DroppedDown || profile.DroppedDown) { barIdle.Restart(); return; }
             if(bar.Visible && barIdle.Elapsed>barHold) { bar.Visible=false; barTimer.Stop(); screen.Focus(); }
         };
         Shown+=(_,_)=>ShowBar(TimeSpan.FromSeconds(3));
@@ -77,7 +104,7 @@ public sealed class Viewer : Form
                 paintedFrames=0; counter.Restart();
             }
         };
-        FormClosed+=(_,_)=> {barTimer.Dispose(); stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
+        FormClosed+=(_,_)=> {barTimer.Dispose(); transfers?.Cancel(); remoteFiles?.Close(); stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
         Shown+=async(_,_)=>
         {
             var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); connection.Dispose();
