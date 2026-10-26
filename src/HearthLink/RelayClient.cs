@@ -1,4 +1,5 @@
 using HearthLink.Core;
+using System.Net;
 using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
@@ -25,7 +26,7 @@ public sealed class RelayException(int closeCode,string message) : Exception(mes
 public static class RelayClient
 {
     public const string DefaultUrl="wss://hearthlink-relay.erickomari.workers.dev";
-    static readonly TimeSpan HandshakeLimit=TimeSpan.FromSeconds(15), ReadyLimit=TimeSpan.FromSeconds(25);
+    static readonly TimeSpan HandshakeLimit=TimeSpan.FromSeconds(15), ReadyLimit=TimeSpan.FromSeconds(25), DirectFirst=TimeSpan.FromSeconds(6);
     /// <summary>The relay's base URL joined with an endpoint path and query. Only wss:// is accepted, except ws:// on loopback for local testing.</summary>
     public static Uri Endpoint(string relayUrl,string endpointWithQuery)
     {
@@ -42,12 +43,12 @@ public static class RelayClient
     {
         var uri=Endpoint(relayUrl,endpointWithQuery);
         string path=endpointWithQuery.Split('?',2)[0];
-        var socket=new ClientWebSocket();
+        using var limit=CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(HandshakeLimit);
+        ClientWebSocket socket;
+        try { socket=await Dial(uri,HttpClient.DefaultProxy,limit.Token); }
+        catch(Exception e) when(e is WebSocketException or HttpRequestException or IOException || e is OperationCanceledException && !token.IsCancellationRequested) { throw RelayException.For(0); }
         try
         {
-            using var limit=CancellationTokenSource.CreateLinkedTokenSource(token); limit.CancelAfter(HandshakeLimit);
-            try { await socket.ConnectAsync(uri,limit.Token); }
-            catch(Exception e) when(e is WebSocketException or HttpRequestException or IOException || e is OperationCanceledException && !token.IsCancellationRequested) { throw RelayException.For(0); }
             var buffer=new byte[4096];
             using var challenge=Parse(await Receive(socket,buffer,limit.Token,token));
             if(Type(challenge)!="challenge" || !challenge.RootElement.TryGetProperty("nonce",out var nonceText) || nonceText.ValueKind!=JsonValueKind.String) throw RelayException.For(RelayProtocol.BadMessage);
@@ -60,6 +61,30 @@ public static class RelayClient
             return socket;
         }
         catch { socket.Dispose(); throw; }
+    }
+    /// <summary>
+    /// Connects the WebSocket directly first, then through <paramref name="systemProxy"/> only if direct fails. A Windows user proxy
+    /// (free "VPN" apps set one) can stall or drop relay sockets, and the relay gains nothing from it: sessions are end-to-end TLS.
+    /// Networks that allow only a proxy still work through the fallback.
+    /// </summary>
+    public static async Task<ClientWebSocket> Dial(Uri uri,IWebProxy? systemProxy,CancellationToken token)
+    {
+        // Proxies are looked up by the HTTP form of the address, as the WebSocket handshake does.
+        var lookup=new UriBuilder(uri) {Scheme=uri.Scheme=="wss"?"https":"http",Port=uri.Port}.Uri;
+        bool proxied;
+        try { proxied=systemProxy!=null && !systemProxy.IsBypassed(lookup) && systemProxy.GetProxy(lookup) is {} via && via!=lookup; }
+        catch(Exception) { proxied=false; }
+        var direct=new ClientWebSocket(); direct.Options.Proxy=null;
+        using(var first=CancellationTokenSource.CreateLinkedTokenSource(token))
+        {
+            if(proxied) first.CancelAfter(DirectFirst);
+            try { await direct.ConnectAsync(uri,first.Token); return direct; }
+            catch(Exception e) when(proxied && (e is WebSocketException or HttpRequestException or IOException || e is OperationCanceledException && !token.IsCancellationRequested)) { direct.Dispose(); }
+            catch { direct.Dispose(); throw; }
+        }
+        var fallback=new ClientWebSocket(); fallback.Options.Proxy=systemProxy;
+        try { await fallback.ConnectAsync(uri,token); return fallback; }
+        catch { fallback.Dispose(); throw; }
     }
     public static async Task<Connection> ConnectHost(string relayUrl,IdentityStore identity,string hostFingerprint,CancellationToken token)
     {
