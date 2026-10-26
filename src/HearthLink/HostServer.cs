@@ -20,6 +20,8 @@ public sealed class HostServer : IDisposable
     public bool Listening { get; private set; }
     /// <summary>Where files sent by a controller land; nothing from the other PC is written anywhere else.</summary>
     public string ReceiveFolder { get; init; }=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Downloads","HearthLink");
+    /// <summary>An unattended session ends after this long without controller input.</summary>
+    public TimeSpan UnattendedIdleLimit { get; set; }=UnattendedAccess.IdleLimit;
     public HostServer(IdentityStore store,MainWindow window,IPAddress? bindAddress=null) { identity=store; ui=window; listener=new(bindAddress??IPAddress.Any,Connection.Port); }
     public void Start() { listener.Start(8); Listening=true; _=Accept(); }
     public void Disconnect() => active?.Cancel();
@@ -104,7 +106,9 @@ public sealed class HostServer : IDisposable
                     initial.CancelAfter(Timeout.InfiniteTimeSpan);
                     // Access mode leads, before any peer-supplied text.
                     string mode=request.Control?"VIEW AND CONTROL":"VIEW ONLY";
-                    bool approved=await ui.OnUi(()=>MessageBox.Show(ui,
+                    // Unattended: the host's Hello-gated switch plus the exact pinned fingerprint checked above. Nothing the peer sent decides.
+                    bool unattended=await ui.OnUi(()=>UnattendedAccess.SkipsApproval(identity.Config.Unattended,identity.Config.Controllers,fingerprint));
+                    bool approved=unattended || await ui.OnUi(()=>MessageBox.Show(ui,
                         $"{mode} access requested.\n\nController name: {PeerName.Clean(identity.Config.Controllers.Entries[fingerprint])}\nFingerprint: {fingerprint}\n\nAllow? All visible desktop contents will be shared.",
                         $"HearthLink • {mode} request",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)==DialogResult.Yes);
                     if(!approved) { await connection.Send(new("denied",Text:"The person at the host declined."),lifetime.Token); return; }
@@ -112,14 +116,27 @@ public sealed class HostServer : IDisposable
                     int monitor=0,profile=0;
                     using var window=new FrameWindow();
                     var pressed=new HashSet<int>(); var buttons=new HashSet<int>();
-                    Task frames=Task.CompletedTask;
+                    Task frames=Task.CompletedTask, watchdog=Task.CompletedTask;
+                    var idle=new IdleClock(UnattendedIdleLimit,DateTimeOffset.UtcNow); bool idled=false;
                     // Session state is set only inside this try, so its finally always cancels the grant and clears it, even if "ready" cannot be sent.
                     try
                     {
                         active=stop;
                         var grant=new SessionFileGrant(fingerprint,request.Control,stop.Token);
                         files=request.Control?grant:null;
-                        await ui.OnUi(()=> { ui.SessionStarted(identity.Config.Controllers.Entries[fingerprint],request.Control,Disconnect); identity.Audit(fingerprint,"connected"); return true; });
+                        await ui.OnUi(()=> { ui.SessionStarted(identity.Config.Controllers.Entries[fingerprint],request.Control,Disconnect,unattended); identity.Audit(fingerprint,unattended?UnattendedAccess.Connected:"connected"); return true; });
+                        if(unattended) watchdog=Task.Run(async()=>
+                        {
+                            try
+                            {
+                                while(!stop.IsCancellationRequested)
+                                {
+                                    await Task.Delay(idle.CheckEvery,stop.Token);
+                                    if(idle.Expired(DateTimeOffset.UtcNow)) { idled=true; stop.Cancel(); }
+                                }
+                            }
+                            catch(OperationCanceledException) { }
+                        });
                         await connection.Send(new("ready",Value:Wire.ProtocolVersion,Code:request.Control?grant.Token:null,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray()),stop.Token);
                         frames=Task.Run(async()=>
                         {
@@ -146,6 +163,7 @@ public sealed class HostServer : IDisposable
                             var p=await connection.Read(stop.Token);
                             if(!identity.Config.Controllers.Contains(fingerprint)) break;
                             if(p.Kind=="disconnect") break;
+                            if(UnattendedAccess.IsActivity(p.Kind)) idle.Touch(DateTimeOffset.UtcNow);
                             if(p.Kind=="presented") {window.Acknowledge(p.Sequence); continue;}
                             if(p.Kind=="monitor" && p.Value>=0 && p.Value<Screen.AllScreens.Length) { Volatile.Write(ref monitor,p.Value); continue; }
                             if(p.Kind=="profile" && p.Value>=0 && p.Value<DesktopCapture.Profiles.Length) {Volatile.Write(ref profile,p.Value); continue;}
@@ -165,10 +183,11 @@ public sealed class HostServer : IDisposable
                     {
                         stop.Cancel();
                         try { await frames; } catch(Exception e) when(e is OperationCanceledException or IOException or ObjectDisposedException or InvalidOperationException or System.ComponentModel.Win32Exception or TimeoutException) { }
+                        await watchdog;
                         foreach(int key in pressed) { try { Desktop.Input(new("key",Value:key),monitor); } catch { } }
                         foreach(int button in buttons) { try { Desktop.Input(new("button",Value:button),monitor); } catch { } }
                         active=null; files=null;
-                        await ui.OnUi(()=> { ui.SessionEnded(); identity.Audit(fingerprint,"disconnected"); return true; });
+                        await ui.OnUi(()=> { ui.SessionEnded(); identity.Audit(fingerprint,idled?UnattendedAccess.IdleDisconnected:"disconnected"); return true; });
                     }
                 }
                 finally { session.Release(); }

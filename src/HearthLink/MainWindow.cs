@@ -20,6 +20,10 @@ public sealed class MainWindow : Form
     readonly Label emptyControllers=new() {Dock=DockStyle.Fill,Text="No controllers have access to this PC.",ForeColor=Brand.Muted,TextAlign=ContentAlignment.MiddleLeft};
     readonly Label connectionProgress=new() {Text="Add a computer with the pairing code shown on it",ForeColor=Brand.Muted,Font=new("Segoe UI",9),Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft,AutoEllipsis=true};
     readonly CheckBox lanListener=new() {Text="Also accept direct connections on my network",AutoSize=false};
+    // AutoCheck is off: the box changes only after Windows Hello succeeds in ChangeUnattended.
+    readonly CheckBox unattended=new() {Text="Let my paired PCs connect when I'm away",AutoSize=false,AutoCheck=false};
+    readonly Label accessCaption=new() {ForeColor=Brand.Muted,Font=new("Segoe UI",9),Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleLeft};
+    readonly Label hostingNote=new() {ForeColor=Brand.Muted,Font=new("Segoe UI",9),Padding=new(0,10,0,0)};
     readonly System.Windows.Forms.Timer pairingExpiry=new() {Interval=120000};
     HostServer? server;
     RelayPresence? presence;
@@ -29,12 +33,16 @@ public sealed class MainWindow : Form
     SessionNotice? notice;
     readonly NotifyIcon sessionTray=new() {Icon=Brand.AppIcon,Text="HearthLink"};
     readonly UpdateCenter updates;
+    /// <summary>Proves someone is at this PC before unattended access changes. Windows Hello by default; tests substitute their own.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Func<string,Task<PresenceCheck>> VerifyPresence { get; set; }
     public bool HasRemoteSession=>server?.HasActiveSession==true || OwnedForms.OfType<Viewer>().Any(v=>!v.IsDisposed);
     public MainWindow(IdentityStore? store=null)
     {
         identity=store??new IdentityStore();
         if(store==null) identity.RelayOverride=Environment.GetEnvironmentVariable("HEARTHLINK_RELAY_URL");
         updates=new(this,identity);
+        VerifyPresence=reason=>WindowsHello.Verify(Handle,reason);
         Text="HearthLink • Your computers"; Size=new(1096,783); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
         Font=new("Segoe UI",10); BackColor=Brand.Canvas; ForeColor=Brand.Ink; Icon=Brand.AppIcon;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};
@@ -83,7 +91,7 @@ public sealed class MainWindow : Form
         controllers.DrawItem+=(_,e)=> { if(e.Index<0) return; var item=(ControllerItem)controllers.Items[e.Index]; bool selected=(e.State&DrawItemState.Selected)!=0; using var brush=new SolidBrush(selected?Color.FromArgb(233,241,255):Color.White); e.Graphics.FillRectangle(brush,e.Bounds); TextRenderer.DrawText(e.Graphics,item.Name,Font,new Point(e.Bounds.Left+6,e.Bounds.Top+3),Brand.Ink); using var small=new Font("Consolas",8); TextRenderer.DrawText(e.Graphics,item.Fingerprint,small,new Point(e.Bounds.Left+6,e.Bounds.Top+23),Brand.Muted); e.DrawFocusRectangle(); };
         var controllerWell=new Panel {Dock=DockStyle.Fill}; controllerWell.Controls.Add(controllers); controllerWell.Controls.Add(emptyControllers);
         var revoke=Action("Remove PC",()=> { if(controllers.SelectedItem is ControllerItem item) RemovePc(item.Fingerprint); }); Brand.Style(revoke,danger:true);
-        access.Controls.Add(Stack((Title("Who can request access",14),30),(Caption("Approved controllers still need your permission to connect."),28),(controllerWell,-1),(Row(revoke,Action("Session history",OpenHistory)),40)));
+        access.Controls.Add(Stack((Title("Who can request access",14),30),(accessCaption,28),(controllerWell,-1),(Row(revoke,Action("Session history",OpenHistory)),40)));
         var local=new Surface {Dock=DockStyle.Fill,Margin=Padding.Empty,Padding=new(18)}; body.Controls.Add(local,2,0);
         var localScroll=new Panel {Dock=DockStyle.Fill,AutoScroll=true}; local.Controls.Add(localScroll);
         var localStack=new TableLayoutPanel {Dock=DockStyle.Top,ColumnCount=1,AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Margin=Padding.Empty}; localScroll.Controls.Add(localStack);
@@ -96,10 +104,12 @@ public sealed class MainWindow : Form
         hostEnabled.Text="Allow incoming sessions"; controllerEnabled.Text="Use as a controller";
         hostEnabled.Checked=identity.Config.Host; controllerEnabled.Checked=identity.Config.Controller;
         lanListener.Checked=identity.Config.LanListener;
+        unattended.Checked=identity.Config.Unattended;
+        unattended.Click+=async(_,_)=>await ChangeUnattended(!identity.Config.Unattended);
         hostEnabled.CheckedChanged+=(_,_)=> { identity.Config.Host=hostEnabled.Checked; identity.Save(); ConfigureHost(); };
         lanListener.CheckedChanged+=(_,_)=> { identity.Config.LanListener=lanListener.Checked; identity.Save(); ConfigureHost(); };
         controllerEnabled.CheckedChanged+=(_,_)=> { identity.Config.Controller=controllerEnabled.Checked; identity.Save(); };
-        Local(hostEnabled,34); Local(lanListener,48); Local(controllerEnabled,34);
+        Local(hostEnabled,34); Local(lanListener,48); Local(unattended,48); Local(controllerEnabled,34);
         hostStatus.AutoSize=false; hostStatus.Font=new("Segoe UI",9); hostStatus.Padding=new(10); hostStatus.BackColor=Color.FromArgb(239,245,253); hostStatus.ForeColor=Brand.Muted; Local(hostStatus,62);
         Local(Action("End remote session",()=>server?.Disconnect()),40); Local(new Panel(),16);
         Local(Action("App updates",updates.Show),40); Local(new Panel(),12);
@@ -109,9 +119,9 @@ public sealed class MainWindow : Form
         Local(Caption("This PC’s identity · SHA-256"),28);
         var fingerprint=new TextBox {Text=identity.Fingerprint,ReadOnly=true,Multiline=true,WordWrap=true,Font=new("Consolas",10),BorderStyle=BorderStyle.None,BackColor=Color.FromArgb(242,246,251),ForeColor=Brand.Ink,TabStop=true}; Local(fingerprint,64);
         Local(new Label {Text="Compare every digit on both PCs before approving a pairing request.",ForeColor=Brand.Muted,Font=new("Segoe UI",9)},50);
-        Local(new Label {Text="Attended access only\nKeep this PC signed in and unlocked.\nClose HearthLink to stop hosting.",ForeColor=Brand.Muted,Font=new("Segoe UI",9),Padding=new(0,10,0,0)},90);
+        Local(hostingNote,90);
         content.Controls.Add(new Label {Text="Encrypted end to end  •  You approve access  •  Works on any network",Dock=DockStyle.Fill,TextAlign=ContentAlignment.BottomLeft,ForeColor=Brand.Muted,Font=new("Segoe UI",9)},0,2);
-        PopulateHosts(); PopulateControllers();
+        PopulateHosts(); PopulateControllers(); ShowAccessMode();
         Shown+=async(_,_)=> { ConfigureHost(); await RefreshHosts(); poll.Start(); if(store==null) updates.Start(); };
         poll.Tick+=async(_,_)=>await RefreshHosts();
         pairingExpiry.Tick+=(_,_)=>ClosePairing("Pairing is closed");
@@ -158,14 +168,14 @@ public sealed class MainWindow : Form
         return result.Task;
     }
     public void SessionStatus(string text)=>hostStatus.Text=text;
-    public void SessionStarted(string controller,bool allowControl,Action endSession)
+    public void SessionStarted(string controller,bool allowControl,Action endSession,bool unattendedSession=false)
     {
         controller=SessionNoticeText.Controller(controller);
-        hostStatus.Text="CONNECTED • "+controller+(allowControl?" • CONTROL":" • VIEW ONLY");
+        hostStatus.Text=(unattendedSession?"CONNECTED UNATTENDED • ":"CONNECTED • ")+controller+(allowControl?" • CONTROL":" • VIEW ONLY");
         hostStatus.BackColor=Color.FromArgb(226,246,237); hostStatus.ForeColor=Color.FromArgb(12,100,72);
         notice?.CloseAfterSession(); notice=new(controller,allowControl,endSession); notice.Show(this);
         sessionTray.Text="HearthLink • remote session active"; sessionTray.Visible=true;
-        sessionTray.ShowBalloonTip(5000,"HearthLink • computer connected",SessionNoticeText.Message(controller,allowControl),ToolTipIcon.Info);
+        sessionTray.ShowBalloonTip(5000,unattendedSession?"HearthLink • connected without approval (unattended)":"HearthLink • computer connected",SessionNoticeText.Message(controller,allowControl),unattendedSession?ToolTipIcon.Warning:ToolTipIcon.Info);
     }
     public void SessionEnded()
     {
@@ -176,7 +186,40 @@ public sealed class MainWindow : Form
     void ShowHostReady()
     {
         if(server?.HasActiveSession==true) return;
-        hostStatus.Text=presence==null?"Host disabled":(presence.State is {Length:>0} state?state:RelayPresence.Connecting)+" • attended approval required"+lanStatus;
+        hostStatus.Text=presence==null?"Host disabled":(presence.State is {Length:>0} state?state:RelayPresence.Connecting)+(identity.Config.Unattended?" • unattended access on":" • attended approval required")+lanStatus;
+    }
+    void ShowAccessMode()
+    {
+        bool on=identity.Config.Unattended;
+        accessCaption.Text=on?"Unattended access is on: these PCs connect without asking.":"Approved controllers still need your permission to connect.";
+        hostingNote.Text=(on?"Unattended access on\nIdle sessions end after 30 minutes.\n":"Attended access only\n")+"Keep this PC signed in and unlocked.\nClose HearthLink to stop hosting.";
+    }
+    /// <summary>
+    /// Turns unattended access on or off after the person at this PC passes <see cref="VerifyPresence"/> (Windows Hello).
+    /// Nothing changes when verification fails or is cancelled. Returns whether the switch now matches <paramref name="on"/>.
+    /// </summary>
+    public async Task<bool> ChangeUnattended(bool on)
+    {
+        if(on==identity.Config.Unattended) return true;
+        unattended.Enabled=false;
+        try
+        {
+            var check=await VerifyPresence(on?"Turn on unattended access: your paired PCs will connect without asking.":"Turn off unattended access.");
+            if(!check.Verified)
+            {
+                identity.Audit(identity.Fingerprint,UnattendedAccess.ChangeRefused);
+                if(check.Problem!=null) MessageBox.Show(this,check.Problem,"HearthLink • unattended access",MessageBoxButtons.OK,MessageBoxIcon.Information);
+                return false;
+            }
+            identity.Config.Unattended=on; identity.Save();
+            identity.Audit(identity.Fingerprint,on?UnattendedAccess.Enabled:UnattendedAccess.Disabled);
+            return true;
+        }
+        finally
+        {
+            if(!unattended.IsDisposed) { unattended.Checked=identity.Config.Unattended; unattended.Enabled=true; }
+            ShowAccessMode(); ShowHostReady();
+        }
     }
     void ConfigureHost()
     {

@@ -203,6 +203,7 @@ static System.Security.Cryptography.X509Certificates.X509Certificate2 TestCertif
     using var ephemeral=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),DateTimeOffset.UtcNow.AddDays(1));
     return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ephemeral.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx),null,System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.UserKeySet);
 }
+UnattendedChecks.Run(Check);
 await UpdateChecks.Run(Check);
 Console.WriteLine($"{passed} checks passed.");
 void CheckQuiet(bool value) {if(!value) throw new Exception("Fixture enqueue failed");}

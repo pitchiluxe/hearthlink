@@ -65,10 +65,19 @@ Two PCs (Task 9):
 
 One-PC measurement, 2026-10-25 (TECHNOBIZ-ASUS, both ends on this PC, 50 MiB each way during a live control session): local relay 16–17 MB/s send, 18–20 MB/s get, 4 of 4 runs; deployed relay 4–8 MB/s, but some runs ended when every relay connection was reset by the remote side at once, which the local relay never shows. Not yet seen between two PCs.
 
+## Unattended access (phase 2, 0.4.0)
+
+- [ ] On a host without a Windows Hello PIN, select **Let my paired PCs connect when I'm away**: a message explains how to add a PIN and the box stays unchecked.
+- [ ] With Windows Hello set up, select it and cancel the Hello prompt: the box stays unchecked. Select it again and verify: it checks and the host status reads **unattended access on**.
+- [ ] From the paired controller, connect: the session starts with no Allow dialog on the host; the host shows the banner with **End session**, the tray icon and a Windows notification; **Session history** shows `unattended-connected`.
+- [ ] From a PC that is not paired with the host, try to connect: refused.
+- [ ] Leave an unattended session without touching the controller for 30 minutes: it disconnects and history shows `unattended-idle-disconnected`. Moving the mouse in the viewer keeps it open.
+- [ ] Remove the controller at the host during an unattended session: the session ends at once.
+- [ ] Turn the switch off (Windows Hello again): the next session needs the Allow dialog.
+
 ## Future release acceptance (not implemented; not passable yet)
 
 - [ ] Discovery displays real untrusted devices separately and grants no access.
-- [ ] Administrator enables unattended mode explicitly for a paired controller; disabling it restores attended consent.
 - [ ] Reboot host and verify configured service/agent startup, visible indicator and termination without weakening Windows protections.
 - [ ] Text clipboard works both ways only when enabled; disabling stops it immediately.
 - [ ] Transfer a test file to an explicitly selected destination. Verify contents, progress, cancellation, partial-file cleanup, overwrite confirmation, denied paths and access permissions.

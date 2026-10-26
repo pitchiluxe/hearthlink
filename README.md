@@ -2,6 +2,8 @@
 
 Original Windows 11 remote desktop application for your own PCs. **Version 0.3.2 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
 
+**Unattended access (unreleased, planned for 0.4.0):** the host setting **Let my paired PCs connect when I'm away** lets every PC already paired with this one start a session without the per-session Allow dialog. It is off by default, and turning it on or off needs Windows Hello (PIN, face or fingerprint) at the host; if Windows Hello is not set up, HearthLink explains how to add a PIN and leaves the switch unchanged. Unpaired PCs still cannot connect. Every unattended session still shows the host banner and tray icon with **End session**, raises a Windows notification, writes `unattended-connected` to session history, and disconnects after 30 minutes without input from the controller (keyboard, mouse, display or quality changes; a view-only viewer that only watches is disconnected after 30 minutes). The decision is fixed rules only: the switch plus the controller's pinned certificate fingerprint. Nothing the other PC sends, such as its name, is consulted. Start at sign-in and close-to-tray are not in this build yet, so HearthLink must be open and the host signed in and unlocked. If Windows Hello is later removed, turn off **Allow incoming sessions** or close HearthLink to stop all incoming sessions.
+
 Version 0.3.2 keeps relay connections working while a proxy-based "VPN" app (such as Aurora VPN free mode) is on: HearthLink reaches the relay directly first and uses the Windows proxy only if that fails.
 
 Version 0.3.1 adds the "Created by Erick Omari" credit to the app sidebar.
@@ -32,7 +34,9 @@ The [step-by-step PDF manual](artifacts/manual/HearthLink-0.1.1-User-Manual.pdf)
 8. Approve the view/control request at the host. Confirm the viewer shows the host's actual desktop. Open Notepad locally on the host, type from the controller and test clicking/moving its window. Do not use a password field for this test.
 9. Close the viewer or choose **Disconnect**. At the host, **End remote session** also terminates access. The visible host status identifies an active connection.
 
-Pair only when someone can compare both devices' identities. One pairing trusts both directions: either PC can request a session on the other, and every session still needs approval on the PC being accessed.
+Pair only when someone can compare both devices' identities. One pairing trusts both directions: either PC can request a session on the other, and every session still needs approval on the PC being accessed unless that PC has turned on unattended access.
+
+**Unattended access:** on the host, select **Let my paired PCs connect when I'm away** and complete the Windows Hello prompt. The host status then reads **unattended access on**, and paired PCs connect without the Allow dialog. Select it again and verify with Windows Hello to turn it off. Changes, refusals and every unattended session are written to **Session history**.
 
 ## Normal use and revocation
 
@@ -42,7 +46,7 @@ Use the monitor list to switch displays. The image is fitted to the viewer; mous
 
 **Remove PC** (in either list) removes that PC in both roles, ends the current host session and updates the relay's allowed list, so the removed PC no longer sees this one as Online. Remove it on the other PC too. Disabling incoming sessions or closing the host app takes the host offline. After a host identity mismatch, compare its new identity in person before deliberately removing and pairing again.
 
-Network interruptions close the viewer connection. Close the viewer, restore connectivity, refresh status, then connect again and approve at the host. There is no automatic reconnection or unattended access in 0.1.1. Do not rely on it for reboot recovery.
+Network interruptions close the viewer connection. Close the viewer, restore connectivity, refresh status, then connect again and approve at the host. There is no automatic reconnection. Unattended access needs HearthLink open on a signed-in, unlocked host; do not rely on it for reboot recovery.
 
 ## Troubleshooting
 
@@ -59,7 +63,7 @@ Network interruptions close the viewer connection. Close the viewer, restore con
 
 ## Build and tests
 
-Build tools used: .NET SDK **10.0.402**, .NET Windows Desktop runtime **10.0.13**, Inno Setup **6** (see verification report for exact local compiler version). Target: `win-x64`, .NET 10 Windows Forms. No third-party NuGet libraries. The SDK/runtime pack downloads require access to Microsoft's NuGet feeds on a fresh machine.
+Build tools used: .NET SDK **10.0.402**, .NET Windows Desktop runtime **10.0.13**, Inno Setup **6** (see verification report for exact local compiler version). Target: `win-x64`, .NET 10 Windows Forms (`net10.0-windows10.0.19041.0`, so the app can call the built-in Windows Hello API; the publish output therefore includes Microsoft's `Microsoft.Windows.SDK.NET.dll` and `WinRT.Runtime.dll` projection assemblies). No third-party NuGet libraries. The SDK/runtime pack downloads require access to Microsoft's NuGet feeds on a fresh machine.
 
 Run `powershell -ExecutionPolicy Bypass -File .\build.ps1 -SelfContained` from a checkout. The process-level execution-policy flag runs this reviewed local build script; it does not change machine policy. An ordinary build may need access to SDK registry metadata; restricted environments must permit that read. `build.ps1` runs both test suites, clears only its generated publish folder, publishes the app and compiles the installer. It does not install the app or open firewall rules on the build PC. The self-contained runtime version is pinned to 10.0.13 in the app project.
 
@@ -73,4 +77,4 @@ For production distribution, sign the application and compiled installer with yo
 
 Use Windows **Settings → Apps → Installed apps → HearthLink → Uninstall**, or the Start-menu uninstaller. The uninstaller removes the program and its named firewall rule. No Windows service, scheduled task or startup entry exists in 0.1.1. Per-user enrollment/history is retained to avoid silently deleting another user's records; to remove it, revoke access first, close HearthLink and delete `%LOCALAPPDATA%\HearthLink` separately for each Windows user that ran it. Deleting identity data requires pairing again after reinstall.
 
-Read [architecture and trust model](docs/ARCHITECTURE.md), [two-PC acceptance checklist](docs/ACCEPTANCE.md), [design notes](docs/DESIGN.md), and [verification report](docs/VERIFICATION.md). The requested unattended service, discovery, clipboard, file transfer and restart/reconnect remain later work, gated on the first real connection test.
+Read [architecture and trust model](docs/ARCHITECTURE.md), [two-PC acceptance checklist](docs/ACCEPTANCE.md), [design notes](docs/DESIGN.md), and [verification report](docs/VERIFICATION.md). The unattended Windows service (lock screen and after-restart access), start at sign-in, discovery, clipboard, file transfer and restart/reconnect remain later work, gated on the first real connection test.

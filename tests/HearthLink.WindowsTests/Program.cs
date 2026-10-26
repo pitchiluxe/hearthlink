@@ -156,6 +156,7 @@ try
         await FileChecks.RunReconnect(host,controller,root,Check);
         await FileChecks.RunLimits(host,controller,root,Check);
         await FileChecks.RunSessions(fixture.Window,host,controller,Path.Combine(root,"host-receive"),root,Check);
+        await UnattendedChecks.Run(fixture.Window,fixture.Server,host,controller,stranger,root,Check);
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
             await c.Send(new("probe")); Check((await c.Read()).Kind=="online","actual HostServer accepts trusted status probe");
