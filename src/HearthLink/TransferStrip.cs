@@ -17,6 +17,12 @@ public sealed class TransferStrip : Panel
     public bool Busy => running!=null;
     /// <summary>Raised when a batch ends (finished, cancelled or failed), so file lists can refresh.</summary>
     public event Action? Finished;
+    /// <summary>What a batch holds once it is listed, before anything moves.</summary>
+    public sealed record Batch(string Verb,int Items,long Bytes,IReadOnlyList<(string Name,int Count)> Heavy);
+    /// <summary>Raised when a batch is listed and starts moving.</summary>
+    public event Action<Batch>? Started;
+    /// <summary>Raised when a batch ends: the message shown in the strip, and whether it failed (not finished or cancelled).</summary>
+    public event Action<Batch,string,bool>? Ended;
     public TransferStrip(Func<CancellationToken,Task<Connection>> openFiles)
     {
         open=openFiles; Dock=DockStyle.Bottom; Height=44; BackColor=Brand.Navy; Visible=false; Padding=new(0,6,8,6);
@@ -34,12 +40,13 @@ public sealed class TransferStrip : Panel
     /// <summary>Far above any real batch; only stops a listing that never ends (for example from a hostile host) before it fills memory.</summary>
     public const int MaxItems=1_000_000;
     static string Inner(string relative,string name)=>relative.Length==0?name:relative+"\\"+name;
-    static bool Fits(string rootName,string relative,string name)=>FilePolicy.ValidName(name) && Inner(relative,name).Split('\\').Length<FileNames.MaxDepth && Inner(relative,name).Length+rootName.Length<FileNames.MaxRelativeLength;
+    static bool Fits(string rootName,string relative,string name,bool folder,IReadOnlyCollection<string>? skip)=>FilePolicy.ValidName(name) && !TransferAssistant.Skips(skip,name,folder) && Inner(relative,name).Split('\\').Length<FileNames.MaxDepth && Inner(relative,name).Length+rootName.Length<FileNames.MaxRelativeLength;
     /// <summary>
     /// Turns local paths (dropped or picked) into what to send, in order: each folder before its contents, then its files, then
-    /// its subfolders. Linked folders (junctions) are not followed, and names the other PC would refuse are left out.
+    /// its subfolders. Linked folders (junctions) are not followed, and names the other PC would refuse are left out, as are
+    /// names inside the folders that match <paramref name="skip"/> (see <see cref="TransferAssistant.Skips"/>).
     /// </summary>
-    public static IReadOnlyList<Outgoing> Expand(IEnumerable<string> paths)
+    public static IReadOnlyList<Outgoing> Expand(IEnumerable<string> paths,IReadOnlyCollection<string>? skip=null)
     {
         var items=new List<Outgoing>(); int roots=0;
         void Walk(string folder,int root,string rootName,string relative)
@@ -47,9 +54,9 @@ public sealed class TransferStrip : Panel
             if(items.Count>=MaxItems) return;
             items.Add(new(null,root,rootName,relative,0));
             var options=new EnumerationOptions {IgnoreInaccessible=true,AttributesToSkip=FileAttributes.ReparsePoint|FileAttributes.System};
-            foreach(var file in new DirectoryInfo(folder).EnumerateFiles("*",options).Where(f=>Fits(rootName,relative,f.Name)).OrderBy(f=>f.Name,StringComparer.OrdinalIgnoreCase))
+            foreach(var file in new DirectoryInfo(folder).EnumerateFiles("*",options).Where(f=>Fits(rootName,relative,f.Name,false,skip)).OrderBy(f=>f.Name,StringComparer.OrdinalIgnoreCase))
                 if(items.Count<MaxItems) items.Add(new(file.FullName,root,rootName,Inner(relative,file.Name),file.Length));
-            foreach(var sub in new DirectoryInfo(folder).EnumerateDirectories("*",options).Where(d=>Fits(rootName,relative,d.Name)).OrderBy(d=>d.Name,StringComparer.OrdinalIgnoreCase))
+            foreach(var sub in new DirectoryInfo(folder).EnumerateDirectories("*",options).Where(d=>Fits(rootName,relative,d.Name,true,skip)).OrderBy(d=>d.Name,StringComparer.OrdinalIgnoreCase))
                 Walk(sub.FullName,root,rootName,Inner(relative,sub.Name));
         }
         foreach(string path in paths)
@@ -60,7 +67,7 @@ public sealed class TransferStrip : Panel
         return items;
     }
     /// <summary>The same expansion for files and folders picked on the other PC, walking its folders with <see cref="FileClient.List"/>.</summary>
-    public static async Task<IReadOnlyList<Incoming>> ExpandRemote(FileClient client,IEnumerable<(string Path,bool Folder,long Size)> picks,CancellationToken token)
+    public static async Task<IReadOnlyList<Incoming>> ExpandRemote(FileClient client,IEnumerable<(string Path,bool Folder,long Size)> picks,CancellationToken token,IReadOnlyCollection<string>? skip=null)
     {
         var items=new List<Incoming>(); int roots=0;
         async Task Walk(string folder,int root,string rootName,string relative)
@@ -68,9 +75,9 @@ public sealed class TransferStrip : Panel
             if(items.Count>=MaxItems) return;
             items.Add(new(null,root,rootName,relative,0));
             var listing=await client.List(folder,token);
-            foreach(var file in listing.Entries.Where(e=>!e.Folder && Fits(rootName,relative,e.Name)))
+            foreach(var file in listing.Entries.Where(e=>!e.Folder && Fits(rootName,relative,e.Name,false,skip)))
                 if(items.Count<MaxItems) items.Add(new(Path.Combine(listing.Folder,file.Name),root,rootName,Inner(relative,file.Name),file.Size));
-            foreach(var sub in listing.Entries.Where(e=>e.Folder && Fits(rootName,relative,e.Name)))
+            foreach(var sub in listing.Entries.Where(e=>e.Folder && Fits(rootName,relative,e.Name,true,skip)))
                 await Walk(Path.Combine(listing.Folder,sub.Name),root,rootName,Inner(relative,sub.Name));
         }
         foreach(var (path,isFolder,size) in picks)
@@ -84,14 +91,14 @@ public sealed class TransferStrip : Panel
     /// <summary>Shows a short message in the strip for 10 s.</summary>
     public void Notice(string message) { text.Text=message; folder.Visible=false; cancel.Visible=false; progress.Visible=false; Visible=true; BringToFront(); fade.Stop(); fade.Start(); }
     /// <summary>Sends local files and folders into <paramref name="remoteFolder"/> on the other PC, or its Downloads\HearthLink when null.</summary>
-    public Task Send(IReadOnlyList<string> paths,string? remoteFolder=null)=>Send(Expand(paths),remoteFolder);
+    public Task Send(IReadOnlyList<string> paths,string? remoteFolder=null,IReadOnlyCollection<string>? skip=null)=>Send(Expand(paths,skip),remoteFolder);
     public Task Send(IReadOnlyList<Outgoing> items,string? remoteFolder=null)
     {
         // The host may rename a top folder ("Album (2)"); later items of that folder go under the name it chose.
         var placed=new Dictionary<int,string>();
         string Remote(Outgoing o)=>o.Root<0?o.Relative:o.Relative.Length==0?placed[o.Root]:placed[o.Root]+"\\"+o.Relative;
         string where=remoteFolder??"Downloads\\HearthLink";
-        return Run("Sending",(_,_)=>Task.FromResult<IReadOnlyList<Job>>(items.Select(o=>new Job(o.Local==null?"folder "+(o.Relative.Length==0?o.RootName:o.RootName+"\\"+o.Relative):Path.GetFileName(o.Local),o.Size,o.Local!=null,async(client,report,token)=>
+        return Run("Sending",(_,_)=>Task.FromResult<IReadOnlyList<Job>>(items.Select(o=>new Job(o.Local==null?"folder "+(o.Relative.Length==0?o.RootName:o.RootName+"\\"+o.Relative):Path.GetFileName(o.Local),o.Relative,o.Size,o.Local!=null,async(client,report,token)=>
         {
             if(o.Local==null && o.Relative.Length==0) placed[o.Root]=await client.Folder(o.RootName,token,remoteFolder);
             else if(o.Local==null) await client.Folder(Remote(o),token,remoteFolder);
@@ -99,12 +106,12 @@ public sealed class TransferStrip : Panel
         })).ToArray()),files=>$"Sent {Files(files)} to {where} on the other PC",null);
     }
     /// <summary>Copies files and folders picked on the other PC into <paramref name="localFolder"/>, or this PC's Downloads\HearthLink when null.</summary>
-    public Task Get(IReadOnlyList<(string Path,bool Folder,long Size)> picks,string? localFolder=null)
+    public Task Get(IReadOnlyList<(string Path,bool Folder,long Size)> picks,string? localFolder=null,IReadOnlyCollection<string>? skip=null)
     {
         string target=localFolder??LocalFolder;
         var placed=new Dictionary<int,string>();
         string Local(Incoming i)=>i.Relative.Length==0?placed[i.Root]:Path.Combine([placed[i.Root],..FileNames.SplitRelative(i.Relative)]);
-        return Run("Getting",async(client,token)=>(await ExpandRemote(client,picks,token)).Select(i=>new Job(i.Remote==null?"folder "+(i.Relative.Length==0?i.RootName:i.RootName+"\\"+i.Relative):Path.GetFileName(i.Remote),i.Size,i.Remote!=null,async(client,report,token)=>
+        return Run("Getting",async(client,token)=>(await ExpandRemote(client,picks,token,skip)).Select(i=>new Job(i.Remote==null?"folder "+(i.Relative.Length==0?i.RootName:i.RootName+"\\"+i.Relative):Path.GetFileName(i.Remote),i.Relative,i.Size,i.Remote!=null,async(client,report,token)=>
         {
             Directory.CreateDirectory(target);
             if(i.Remote==null && i.Relative.Length==0) { placed[i.Root]=FileNames.Unique(target,i.RootName); Directory.CreateDirectory(placed[i.Root]); }
@@ -113,19 +120,21 @@ public sealed class TransferStrip : Panel
         })).ToArray(),files=>$"Saved {Files(files)} to {target}",target);
     }
     static string Files(int count)=>count==1?"1 file":$"{count} files";
-    sealed record Job(string Name,long Size,bool IsFile,Func<FileClient,IProgress<long>,CancellationToken,Task> Do);
+    sealed record Job(string Name,string Relative,long Size,bool IsFile,Func<FileClient,IProgress<long>,CancellationToken,Task> Do);
     async Task Run(string verb,Func<FileClient,CancellationToken,Task<IReadOnlyList<Job>>> prepare,Func<int,string> done,string? opens)
     {
         if(running!=null) { Notice("A transfer is already running. Wait or cancel it first."); return; }
         using var cts=new CancellationTokenSource(); running=cts;
         fade.Stop(); folder.Visible=false; cancel.Visible=true; progress.Visible=true; Visible=true; BringToFront();
         text.Text=$"{verb}: preparing…"; progress.Value=0;
-        int files=0;
+        int files=0; Batch batch=new(verb,0,0,[]); bool failed=false;
         try
         {
             using var client=new FileClient(await open(cts.Token));
             var jobs=await prepare(client,cts.Token);
+            batch=new(verb,jobs.Count,jobs.Sum(j=>j.Size),TransferAssistant.Heavy(jobs.Select(j=>j.Relative)));
             if(jobs.Count>=MaxItems) throw new InvalidOperationException($"Too many items: pick fewer than {MaxItems:N0} files and folders at a time.");
+            Started?.Invoke(batch);
             for(int i=0;i<jobs.Count;i++)
             {
                 var job=jobs[i]; int index=i;
@@ -140,8 +149,9 @@ public sealed class TransferStrip : Panel
         catch(OperationCanceledException) { text.Text=files>0?$"Transfer stopped after {Files(files)}":"Transfer stopped"; }
         catch(Exception e) when(e is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException or AuthenticationException or ArgumentException)
         {
+            failed=true;
             text.Text="Transfer stopped: "+(e is IOException && e.GetType()!=typeof(FileNotFoundException)?"the connection to the other PC was lost.":e.Message);
         }
-        finally { running=null; cancel.Visible=false; progress.Visible=false; fade.Start(); Finished?.Invoke(); }
+        finally { running=null; cancel.Visible=false; progress.Visible=false; fade.Start(); Ended?.Invoke(batch,text.Text,failed); Finished?.Invoke(); }
     }
 }
