@@ -98,6 +98,19 @@ static class FileChecks
         check(Same(tree,Path.Combine(back,"Trip")) && Same(tree,Path.Combine(back,"Trip (2)")) && File.ReadAllText(Path.Combine(back,"loose.txt"))=="x","copy to the local pane recreates remote folder trees in its folder");
         await window.OnUi(()=> { strip.Dispose(); return true; });
     }
+    /// <summary>The remote pane's connection dropped while idle (the relay closes silent WebSockets): the next folder still opens.</summary>
+    public static async Task RunReconnect(IdentityStore host,IdentityStore controller,string root,Action<bool,string> check)
+    {
+        string folder=Path.Combine(root,"reconnect"); Directory.CreateDirectory(Path.Combine(folder,"Inner"));
+        var hostEnds=new List<Connection>(); int opened=0;
+        async Task<Connection> Open(CancellationToken t) { var (c,h)=await Linked(host,controller); opened++; hostEnds.Add(h); _=new FileHost(Path.Combine(root,"reconnect-receive")).Serve(h,CancellationToken.None); return c; }
+        using var remote=new RemoteFiles(Open,CancellationToken.None);
+        var first=await remote.List(folder);
+        hostEnds[0].Dispose(); await Task.Delay(300);
+        (string Folder,IReadOnlyList<FileEntry> Entries)? second=null; string? failure=null;
+        try { second=await remote.List(Path.Combine(folder,"Inner")); } catch(Exception e) { failure=e.GetType().Name+": "+e.Message; }
+        check(first.Entries.Any(e=>e.Name=="Inner") && second?.Folder==Path.Combine(folder,"Inner") && opened==2,"remote pane reconnects once when its connection was dropped"+(failure==null?"":" ("+failure+")"));
+    }
     static byte[] RandomFile(string path,int bytes) { var data=RandomNumberGenerator.GetBytes(bytes); File.WriteAllBytes(path,data); return data; }
     public static async Task Run(string root,Action<bool,string> check)
     {

@@ -26,14 +26,26 @@ public sealed class RemoteFiles(Func<CancellationToken,Task<Connection>> open,Ca
     FileClient? client;
     IReadOnlyList<DriveEntry>? drives;
     public string Home { get; private set; }="";
+    /// <summary>
+    /// Runs one request. The browsing connection sits idle while the user reads a list, and the relay closes silent
+    /// connections, so a request that fails on a reused connection is retried once on a fresh one.
+    /// </summary>
     async Task<T> Use<T>(Func<FileClient,Task<T>> action)
     {
         await one.WaitAsync(lifetime);
         try
         {
-            client??=new FileClient(await open(lifetime));
-            try { return await action(client); }
-            catch(Exception e) when(e is IOException or InvalidDataException) { client.Dispose(); client=null; throw; }
+            for(int attempt=0;;attempt++)
+            {
+                bool reused=client!=null;
+                client??=new FileClient(await open(lifetime));
+                try { return await action(client); }
+                catch(Exception e) when(e is IOException or InvalidDataException or ObjectDisposedException)
+                {
+                    client.Dispose(); client=null;
+                    if(!reused || attempt>0) throw;
+                }
+            }
         }
         finally { one.Release(); }
     }
@@ -183,7 +195,7 @@ public sealed class FilePane : Panel
         summary.ForeColor=Brand.Muted;
         summary.Text=$"{SizeText(picked.Where(e=>!e.Folder).Sum(e=>e.Size))} / {SizeText(shown.Where(e=>!e.Folder).Sum(e=>e.Size))} in {picked.Count(e=>!e.Folder)} / {files} file(s), {picked.Count(e=>e.Folder)} / {dirs} dir(s)";
     }
-    void Fail(Exception e) { summary.ForeColor=Color.Firebrick; summary.Text=e is InvalidOperationException or UnauthorizedAccessException?e.Message:e is IOException?"Cannot open that folder, or the connection to the other PC was lost.":e.Message; }
+    void Fail(Exception e) { summary.ForeColor=Color.Firebrick; summary.Text=e is InvalidOperationException or UnauthorizedAccessException?e.Message:e is IOException?(source is RemoteFiles?"Lost the connection to the other PC. Press Ctrl+R to try again.":"Cannot open that folder."):e.Message; }
     static bool Expected(Exception e)=>e is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException or AuthenticationException or ArgumentException or OperationCanceledException;
     public static string SizeText(long bytes)=>bytes switch { <1024=>$"{bytes} b", <1024*1024=>$"{bytes/1024d:F1} k", <1024L*1024*1024=>$"{bytes/1048576d:F1} M", _=>$"{bytes/1073741824d:F1} G" };
 }
