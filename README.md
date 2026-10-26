@@ -36,7 +36,7 @@ The [step-by-step PDF manual](artifacts/manual/HearthLink-0.1.1-User-Manual.pdf)
 
 Pair only when someone can compare both devices' identities. One pairing trusts both directions: either PC can request a session on the other, and every session still needs approval on the PC being accessed unless that PC has turned on unattended access.
 
-**Unattended access:** on the host, select **Let my paired PCs connect when I'm away** and complete the Windows Hello prompt. The host status then reads **unattended access on**, and paired PCs connect without the Allow dialog. Select it again and verify with Windows Hello to turn it off. Changes, refusals and every unattended session are written to **Session history**.
+**Unattended access:** on the host, select **Let my paired PCs connect when I'm away** and complete the Windows Hello prompt. The host status then reads **unattended access on**, and paired PCs connect without the Allow dialog. It cannot be turned on while another PC is connected to this one (a remote controller could otherwise click it and type into the Windows Hello prompt). Select it again and verify with Windows Hello to turn it off; this also ends an unattended session in progress. Changes, refusals and every unattended session are written to **Session history**.
 
 ## Normal use and revocation
 

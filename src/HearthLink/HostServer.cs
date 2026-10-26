@@ -17,6 +17,8 @@ public sealed class HostServer : IDisposable
     CancellationTokenSource? active;
     SessionFileGrant? files;
     public bool HasActiveSession=>active!=null;
+    /// <summary>The active session started without the Allow dialog; it ends when unattended access is turned off.</summary>
+    public bool HasUnattendedSession { get; private set; }
     public bool Listening { get; private set; }
     /// <summary>Where files sent by a controller land; nothing from the other PC is written anywhere else.</summary>
     public string ReceiveFolder { get; init; }=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Downloads","HearthLink");
@@ -121,7 +123,7 @@ public sealed class HostServer : IDisposable
                     // Session state is set only inside this try, so its finally always cancels the grant and clears it, even if "ready" cannot be sent.
                     try
                     {
-                        active=stop;
+                        active=stop; HasUnattendedSession=unattended;
                         var grant=new SessionFileGrant(fingerprint,request.Control,stop.Token);
                         files=request.Control?grant:null;
                         await ui.OnUi(()=> { ui.SessionStarted(identity.Config.Controllers.Entries[fingerprint],request.Control,Disconnect,unattended); identity.Audit(fingerprint,unattended?UnattendedAccess.Connected:"connected"); return true; });
@@ -133,6 +135,7 @@ public sealed class HostServer : IDisposable
                                 {
                                     await Task.Delay(idle.CheckEvery,stop.Token);
                                     if(idle.Expired(DateTimeOffset.UtcNow)) { idled=true; stop.Cancel(); }
+                                    else if(!identity.Config.Unattended) stop.Cancel();
                                 }
                             }
                             catch(OperationCanceledException) { }
@@ -186,7 +189,7 @@ public sealed class HostServer : IDisposable
                         await watchdog;
                         foreach(int key in pressed) { try { Desktop.Input(new("key",Value:key),monitor); } catch { } }
                         foreach(int button in buttons) { try { Desktop.Input(new("button",Value:button),monitor); } catch { } }
-                        active=null; files=null;
+                        active=null; files=null; HasUnattendedSession=false;
                         await ui.OnUi(()=> { ui.SessionEnded(); identity.Audit(fingerprint,idled?UnattendedAccess.IdleDisconnected:"disconnected"); return true; });
                     }
                 }

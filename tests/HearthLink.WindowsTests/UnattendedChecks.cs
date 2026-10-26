@@ -31,7 +31,20 @@ static class UnattendedChecks
         }
         await Task.Delay(300);
 
-        answer=new(true);
+        {
+            // An attended session could click the switch remotely and type into the Hello prompt.
+            var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint);
+            await c.Send(new("session",Control:true,Value:Wire.ProtocolVersion));
+            await NativeDialogs.Answer(uiThread,NativeDialogs.Yes,TimeSpan.FromSeconds(15));
+            bool started=(await c.Read()).Kind=="ready";
+            answer=new(true); int askedBefore=asked.Count;
+            var during=Change(true);
+            string busy=await NativeDialogs.Answer(uiThread,Ok,TimeSpan.FromSeconds(15));
+            check(started && !await during && asked.Count==askedBefore && busy.Contains("End the session first") && !host.Config.Unattended && !Saved(),"unattended access cannot be turned on during a remote session");
+            await c.Send(new("disconnect")); c.Dispose();
+        }
+        await Task.Delay(500);
+
         changed=await Change(true);
         check(changed && asked.Count==3 && host.Config.Unattended && Saved() && Count(UnattendedAccess.Enabled)==1,"verified Windows Hello turns unattended access on and saves it");
 
@@ -67,12 +80,28 @@ static class UnattendedChecks
         server.UnattendedIdleLimit=UnattendedAccess.IdleLimit;
         await Task.Delay(300);
 
-        answer=new(false);
-        changed=await Change(false);
-        check(!changed && host.Config.Unattended && Saved(),"turning unattended access off also needs Windows Hello");
-        answer=new(true);
-        changed=await Change(false);
-        check(changed && !host.Config.Unattended && !Saved() && Count(UnattendedAccess.Disabled)==1,"verified Windows Hello turns unattended access off");
+        {
+            var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint);
+            await c.Send(new("session",Control:true,Value:Wire.ProtocolVersion));
+            var reading=c.Read();
+            bool prompted=await Task.WhenAny(reading,Task.Delay(TimeSpan.FromSeconds(8)))!=reading;
+            if(prompted) foreach(var dialog in NativeDialogs.Open(uiThread)) NativeDialogs.Press(dialog,NativeDialogs.No);
+            bool started=(await reading).Kind=="ready" && server.HasUnattendedSession;
+            var reader=Task.Run(async()=>
+            {
+                try { while(true) { var p=await c.Read(); if(p.Frame is {} f) await c.Send(new("presented",Sequence:f.Sequence)); } }
+                catch(Exception e) when(e is IOException or ObjectDisposedException or InvalidOperationException or InvalidDataException) { }
+            });
+            answer=new(false);
+            changed=await Change(false);
+            check(started && !changed && host.Config.Unattended && Saved() && server.HasActiveSession,"turning unattended access off also needs Windows Hello");
+            answer=new(true);
+            changed=await Change(false);
+            bool ended=await Task.WhenAny(reader,Task.Delay(TimeSpan.FromSeconds(10)))==reader;
+            c.Dispose(); await reader;
+            check(changed && ended && !server.HasActiveSession && !host.Config.Unattended && !Saved() && Count(UnattendedAccess.Disabled)==1,"verified Windows Hello turns unattended access off and ends the unattended session");
+        }
+        await Task.Delay(300);
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
             await c.Send(new("session",Control:true,Value:Wire.ProtocolVersion));

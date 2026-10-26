@@ -31,6 +31,8 @@ public sealed class MainWindow : Form
     int pairingRound;
     bool polling;
     SessionNotice? notice;
+    /// <summary>The incoming session's End session action and whether it started unattended; null when none is active.</summary>
+    (Action End,bool Unattended)? incoming;
     readonly NotifyIcon sessionTray=new() {Icon=Brand.AppIcon,Text="HearthLink"};
     readonly UpdateCenter updates;
     /// <summary>Proves someone is at this PC before unattended access changes. Windows Hello by default; tests substitute their own.</summary>
@@ -170,6 +172,7 @@ public sealed class MainWindow : Form
     public void SessionStatus(string text)=>hostStatus.Text=text;
     public void SessionStarted(string controller,bool allowControl,Action endSession,bool unattendedSession=false)
     {
+        incoming=(endSession,unattendedSession);
         controller=SessionNoticeText.Controller(controller);
         hostStatus.Text=(unattendedSession?"CONNECTED UNATTENDED • ":"CONNECTED • ")+controller+(allowControl?" • CONTROL":" • VIEW ONLY");
         hostStatus.BackColor=Color.FromArgb(226,246,237); hostStatus.ForeColor=Color.FromArgb(12,100,72);
@@ -179,6 +182,7 @@ public sealed class MainWindow : Form
     }
     public void SessionEnded()
     {
+        incoming=null;
         notice?.CloseAfterSession(); notice=null; sessionTray.Visible=false;
         hostStatus.BackColor=Color.FromArgb(239,245,253); hostStatus.ForeColor=Brand.Muted;
         ShowHostReady();
@@ -201,10 +205,14 @@ public sealed class MainWindow : Form
     public async Task<bool> ChangeUnattended(bool on)
     {
         if(on==identity.Config.Unattended) return true;
+        // A remote controller could click this box and type into the Hello prompt; turning it on needs nobody connected, before and after Hello.
+        const string busy="Unattended access cannot be turned on while another PC is connected to this one. End the session first.";
+        if(on && incoming!=null) { identity.Audit(identity.Fingerprint,UnattendedAccess.ChangeRefused); MessageBox.Show(this,busy,"HearthLink • unattended access",MessageBoxButtons.OK,MessageBoxIcon.Information); return false; }
         unattended.Enabled=false;
         try
         {
             var check=await VerifyPresence(on?"Turn on unattended access: your paired PCs will connect without asking.":"Turn off unattended access.");
+            if(on && incoming!=null) check=new(false,busy);
             if(!check.Verified)
             {
                 identity.Audit(identity.Fingerprint,UnattendedAccess.ChangeRefused);
@@ -213,6 +221,7 @@ public sealed class MainWindow : Form
             }
             identity.Config.Unattended=on; identity.Save();
             identity.Audit(identity.Fingerprint,on?UnattendedAccess.Enabled:UnattendedAccess.Disabled);
+            if(!on && incoming is {Unattended:true} session) session.End();
             return true;
         }
         finally
