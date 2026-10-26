@@ -14,6 +14,9 @@ public sealed class Settings
     public bool Controller { get; set; }=true;
     public TrustBook Controllers { get; set; }=new();
     public List<Peer> Hosts { get; set; }=[];
+    /// <summary>A relay the user chose; empty means the app's built-in <see cref="RelayClient.DefaultUrl"/>, so saved settings follow app updates.</summary>
+    public string RelayUrl { get; set; }="";
+    public bool LanListener { get; set; }
 }
 public sealed class IdentityStore
 {
@@ -21,6 +24,12 @@ public sealed class IdentityStore
     public Settings Config { get; }
     public X509Certificate2 Certificate { get; }
     public string Fingerprint => FingerprintOf(Certificate);
+    /// <summary>A relay address for this run only (never saved), e.g. from HEARTHLINK_RELAY_URL.</summary>
+    public string? RelayOverride { get; set; }
+    public string RelayUrl => !string.IsNullOrWhiteSpace(RelayOverride) ? RelayOverride.Trim() : Chosen(Config.RelayUrl) ?? RelayClient.DefaultUrl;
+    // Pre-release 0.3.0 builds saved their built-in address into settings, including the undeployed placeholder.
+    static readonly string[] SavedDefaults=["wss://hearthlink-relay.REPLACE.workers.dev",RelayClient.DefaultUrl];
+    static string? Chosen(string saved)=>string.IsNullOrWhiteSpace(saved) || SavedDefaults.Contains(saved.Trim()) ? null : saved.Trim();
     public static string FingerprintOf(X509Certificate cert) => Convert.ToHexString(SHA256.HashData(cert.GetRawCertData()));
     public IdentityStore(string? folder=null)
     {
@@ -51,6 +60,33 @@ public sealed class IdentityStore
         string target=Path.Combine(root,"settings.protected");
         File.WriteAllBytes(target+".new",Protect(JsonSerializer.SerializeToUtf8Bytes(Config)));
         File.Move(target+".new",target,true);
+    }
+    /// <summary>Trusts <paramref name="fingerprint"/> as both controller and host. Existing entries keep their name and address; only an empty address is filled. Saves and returns true when anything changed.</summary>
+    public bool TrustBothWays(string fingerprint,string name,string? lanAddress)
+    {
+        string clean=PeerName.Clean(name) is {Length:>0} n?n:"Paired PC"; bool changed=false;
+        if(!Config.Controllers.Contains(fingerprint)) { Config.Controllers.Add(fingerprint,clean); changed=true; }
+        int index=Config.Hosts.FindIndex(p=>p.Fingerprint==fingerprint);
+        if(index<0) { Config.Hosts.Add(new(clean,lanAddress??"",fingerprint)); changed=true; }
+        else if(Config.Hosts[index].Address.Length==0 && !string.IsNullOrEmpty(lanAddress)) { Config.Hosts[index]=Config.Hosts[index] with {Address=lanAddress}; changed=true; }
+        if(changed) Save();
+        return changed;
+    }
+    /// <summary>Completes a one-way 0.2.x pairing after a pinned exchange. Acts only for a PC already trusted in one role, so it never trusts an unpaired PC.</summary>
+    public bool UpgradeTrust(string fingerprint,string? lanAddress)
+    {
+        string? name=Config.Controllers.Entries.GetValueOrDefault(fingerprint) ?? Config.Hosts.Find(p=>p.Fingerprint==fingerprint)?.Name;
+        if(name==null || !TrustBothWays(fingerprint,name,lanAddress)) return false;
+        Audit(fingerprint,"trust-upgraded"); return true;
+    }
+    /// <summary>Removes a PC in both roles. Saves and returns true when it was trusted in either.</summary>
+    public bool Remove(string fingerprint)
+    {
+        bool had=Config.Controllers.Contains(fingerprint);
+        Config.Controllers.Remove(fingerprint);
+        had|=Config.Hosts.RemoveAll(p=>p.Fingerprint==fingerprint)>0;
+        if(had) Save();
+        return had;
     }
     public void Audit(string fingerprint,string outcome)
     {

@@ -7,17 +7,14 @@ public sealed class Viewer : Form
     readonly Connection connection;
     sealed class RemoteScreen : PictureBox
     {
-        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
-        internal long Sequence {get;set;}
-        long presented;
         public event Action<long>? Presented;
         public RemoteScreen() {SetStyle(ControlStyles.Selectable|ControlStyles.OptimizedDoubleBuffer,true); TabStop=true;}
         protected override bool IsInputKey(Keys keyData)=>true;
-        protected override void OnPaint(PaintEventArgs e)
-        {
-            base.OnPaint(e);
-            if(Sequence>presented && Image!=null) {presented=Sequence; Presented?.Invoke(presented);}
-        }
+        /// <summary>
+        /// Shows a decoded frame and reports it presented at once. Waiting for a paint would stall the session whenever the
+        /// viewer is minimized or covered (Windows sends no paint then), and the host stops after 8 s without acknowledgements.
+        /// </summary>
+        public void ShowFrame(Image image,long sequence) { var old=Image; Image=image; old?.Dispose(); Invalidate(); Presented?.Invoke(sequence); }
     }
     readonly RemoteScreen screen=new() {Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,BackColor=Color.Black};
     readonly Label status=new() {ForeColor=Color.White,AutoEllipsis=true,Width=310,Height=38,Padding=new(8)};
@@ -25,25 +22,77 @@ public sealed class Viewer : Form
     readonly InputMailbox outbound=new();
     readonly bool control;
     readonly Stopwatch counter=Stopwatch.StartNew();
-    int desiredMonitor,paintedFrames;
+    int desiredMonitor,shownFrames;
     VideoFrame? current;
     bool full;
     Rectangle previous;
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors)
+    // The toolbar floats over the remote screen and stays hidden, so only the connected PC is visible.
+    readonly FlowLayoutPanel bar=new() {AutoSize=true,AutoSizeMode=AutoSizeMode.GrowAndShrink,Padding=new(12,10,12,8),BackColor=Brand.Navy,WrapContents=false,Visible=false};
+    readonly System.Windows.Forms.Timer barTimer=new() {Interval=150};
+    readonly Stopwatch barIdle=new();
+    TimeSpan barHold;
+    // Open while a file dialog or browser is up, so the toolbar does not slide away under it.
+    bool holdBar, menuOpen;
+    TransferStrip? transfers;
+    FileManagerWindow? fileManager;
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null)
     {
         connection=c; control=allowControl;
-        Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(1050,500); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
-        var bar=new FlowLayoutPanel {Dock=DockStyle.Top,Height=64,Padding=new(12,12,12,8),BackColor=Brand.Navy,WrapContents=false};
-        var displays=new ComboBox {DropDownStyle=ComboBoxStyle.DropDownList,Width=180,Margin=new(0,5,8,0),Font=Font}; displays.Items.AddRange(monitors); displays.SelectedIndex=0;
-        displays.SelectedIndexChanged+=(_,_)=> {Volatile.Write(ref desiredMonitor,displays.SelectedIndex); Post(new("monitor",Value:displays.SelectedIndex));};
-        var profile=new ComboBox {DropDownStyle=ComboBoxStyle.DropDownList,Width=138,Margin=new(0,5,8,0),Font=Font};
-        profile.Items.AddRange(["Responsive","Balanced","Full detail"]); profile.SelectedIndex=0;
-        profile.SelectedIndexChanged+=(_,_)=>Post(new("profile",Value:profile.SelectedIndex));
+        Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(640,400); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
+        // Menu buttons, as in TeamViewer's toolbar: a menu pops up above everything, where combo box lists failed to open on some PCs.
+        var displays=Choice(monitors,0,index=> {Volatile.Write(ref desiredMonitor,index); Post(new("monitor",Value:index));});
+        var profile=Choice(DesktopCapture.Profiles,0,index=>Post(new("profile",Value:index)));
         var fullscreen=Brand.Style(new Button {Text="Full screen",AutoSize=true}); fullscreen.Click+=(_,_)=>ToggleFull();
         var disconnect=Brand.Style(new Button {Text="Disconnect",AutoSize=true},true); disconnect.Click+=(_,_)=>Close();
-        status.Text=control?"Connected • Control":"Connected • View only";
-        bar.Controls.AddRange([displays,profile,fullscreen,disconnect,status]); Controls.Add(screen); Controls.Add(bar);
-        screen.MouseMove+=(_,e)=> {if(Position(e.Location,out int x,out int y)) Post(new("move",X:x,Y:y));};
+        status.Text=(control?"Connected • Control":"Connected • View only")+" • "+route;
+        bar.Controls.AddRange([displays,profile]);
+        if(control && openFiles!=null)
+        {
+            var strip=transfers=new TransferStrip(openFiles);
+            var send=Brand.Style(new Button {Text="Send files",AutoSize=true});
+            send.Click+=async(_,_)=>
+            {
+                using var pick=new OpenFileDialog {Multiselect=true,Title="Send files to "+name};
+                holdBar=true; bool chosen=pick.ShowDialog(this)==DialogResult.OK; holdBar=false;
+                if(chosen) await strip.Send(pick.FileNames);
+            };
+            var get=Brand.Style(new Button {Text="File transfer",AutoSize=true});
+            get.Click+=(_,_)=>
+            {
+                if(fileManager is {IsDisposed:false}) { fileManager.Activate(); return; }
+                fileManager=new FileManagerWindow(name,openFiles);
+                fileManager.FormClosed+=(_,_)=>fileManager=null;
+                fileManager.Show(this);
+            };
+            bar.Controls.AddRange([send,get]);
+            // Files dragged from Explorer onto the remote screen are sent like Send files.
+            screen.AllowDrop=true;
+            screen.DragEnter+=(_,e)=>e.Effect=e.Data?.GetDataPresent(DataFormats.FileDrop)==true?DragDropEffects.Copy:DragDropEffects.None;
+            screen.DragDrop+=async(_,e)=>
+            {
+                if(e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
+                var items=TransferStrip.Expand(paths);
+                if(items.Count==0) { strip.Notice("Nothing to send: those names cannot be copied."); return; }
+                if(items.Count>=TransferStrip.MaxItems) { strip.Notice($"Too many items: drop fewer than {TransferStrip.MaxItems} files and folders at a time."); return; }
+                await strip.Send(items);
+            };
+        }
+        bar.Controls.AddRange([fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();
+        // Added after the screen so it docks first and the screen fills what is left.
+        if(transfers!=null) Controls.Add(transfers);
+        Resize+=(_,_)=>PlaceBar(); bar.SizeChanged+=(_,_)=>PlaceBar();
+        barTimer.Tick+=(_,_)=>
+        {
+            bool over=bar.Visible && bar.Bounds.Contains(PointToClient(Cursor.Position));
+            if(over || holdBar || menuOpen) { barIdle.Restart(); return; }
+            if(bar.Visible && barIdle.Elapsed>barHold) { bar.Visible=false; barTimer.Stop(); screen.Focus(); }
+        };
+        Shown+=(_,_)=>ShowBar(TimeSpan.FromSeconds(3));
+        screen.MouseMove+=(_,e)=>
+        {
+            if(e.Y<=2) ShowBar(TimeSpan.FromSeconds(1));
+            if(Position(e.Location,out int x,out int y)) Post(new("move",X:x,Y:y));
+        };
         screen.MouseDown+=(_,e)=> {screen.Focus(); if(!Position(e.Location,out int x,out int y)) return; Post(new("move",X:x,Y:y)); Post(new("button",Value:Button(e.Button),Down:true));};
         screen.MouseUp+=(_,e)=>Post(new("button",Value:Button(e.Button)));
         screen.MouseWheel+=(_,e)=>Post(new("wheel",Value:e.Delta));
@@ -52,22 +101,50 @@ public sealed class Viewer : Form
         screen.LostFocus+=(_,_)=>Post(new("release")); Deactivate+=(_,_)=>Post(new("release"));
         screen.Presented+=sequence=>
         {
-            Post(new("presented",Sequence:sequence)); paintedFrames++;
+            Post(new("presented",Sequence:sequence)); shownFrames++;
             if(counter.Elapsed.TotalSeconds>=1 && current!=null)
             {
-                double fps=paintedFrames/counter.Elapsed.TotalSeconds;
+                double fps=shownFrames/counter.Elapsed.TotalSeconds;
                 double stages=(current.CaptureMicroseconds+current.EncodeMicroseconds)/1000d;
-                status.Text=$"{fps:F0} fps • host {stages:F0} ms • round trip {current.RoundTripMilliseconds} ms";
-                paintedFrames=0; counter.Restart();
+                status.Text=$"{fps:F0} fps • host {stages:F0} ms • round trip {current.RoundTripMilliseconds} ms • {route}";
+                shownFrames=0; counter.Restart();
             }
         };
-        FormClosed+=(_,_)=> {stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
+        FormClosed+=(_,_)=> {barTimer.Dispose(); transfers?.Cancel(); fileManager?.Close(); stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
         Shown+=async(_,_)=>
         {
             var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); connection.Dispose();
             try {await writing;} catch(OperationCanceledException) { }
         };
     }
+    /// <summary>A toolbar button showing the current option ("Balanced ▾") that opens a menu of the options.</summary>
+    Button Choice(string[] options,int selected,Action<int> chosen)
+    {
+        var button=Brand.Style(new Button {Text=options[selected]+"  ▾",AutoSize=true,Margin=new(0,0,8,0)});
+        var menu=new ContextMenuStrip {Font=Font,ShowCheckMargin=true,ShowImageMargin=false};
+        for(int i=0;i<options.Length;i++)
+        {
+            int index=i; var item=new ToolStripMenuItem(options[i]) {Checked=i==selected};
+            item.Click+=(_,_)=>
+            {
+                foreach(ToolStripMenuItem other in menu.Items) other.Checked=other==item;
+                button.Text=options[index]+"  ▾"; chosen(index);
+            };
+            menu.Items.Add(item);
+        }
+        menu.Opened+=(_,_)=>menuOpen=true; menu.Closed+=(_,_)=>menuOpen=false;
+        button.Click+=(_,_)=>menu.Show(button,new Point(0,button.Height));
+        button.Disposed+=(_,_)=>menu.Dispose();
+        return button;
+    }
+    /// <summary>Reveals the toolbar; it hides again once the pointer has been away from it for <paramref name="hold"/>.</summary>
+    void ShowBar(TimeSpan hold)
+    {
+        barHold=hold; barIdle.Restart();
+        if(!bar.Visible) { bar.Visible=true; PlaceBar(); bar.BringToFront(); }
+        barTimer.Start();
+    }
+    void PlaceBar()=>bar.Location=new(Math.Max(0,(ClientSize.Width-bar.Width)/2),0);
     static int Button(MouseButtons button)=>button switch {MouseButtons.Left=>1,MouseButtons.Right=>2,MouseButtons.Middle=>3,_=>0};
     bool Position(Point point,out int x,out int y)
     {
@@ -106,7 +183,7 @@ public sealed class Viewer : Form
                     await this.InvokeAsync(()=>
                     {
                         if(IsDisposed || stop.IsCancellationRequested) return;
-                        var old=screen.Image; screen.Sequence=frame.Sequence; current=frame; screen.Image=bitmap; transferred=true; old?.Dispose(); screen.Invalidate();
+                        current=frame; transferred=true; screen.ShowFrame(bitmap,frame.Sequence);
                     },stop.Token).ConfigureAwait(false);
                 }
                 finally {if(!transferred) bitmap.Dispose();}

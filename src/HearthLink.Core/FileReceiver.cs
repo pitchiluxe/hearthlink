@@ -11,7 +11,7 @@ public sealed class FileReceiver : IAsyncDisposable
     public long Received {get;private set;}
     public FileReceiver(string destination,long length,Guid id,bool overwrite)
     {
-        if(length<0 || length>FilePolicy.MaxFileBytes || id==Guid.Empty || !Path.IsPathFullyQualified(destination)) throw new InvalidDataException("Invalid file destination or size.");
+        if(length<0 || id==Guid.Empty || !Path.IsPathFullyQualified(destination)) throw new InvalidDataException("Invalid file destination or size.");
         this.destination=Path.GetFullPath(destination); expected=length; this.overwrite=overwrite;
         temp=Path.Combine(Path.GetDirectoryName(this.destination)!,"hearthlink-"+id.ToString("N")+".partial");
         stream=new FileStream(temp,FileMode.CreateNew,FileAccess.Write,FileShare.None,FilePolicy.ChunkBytes,FileOptions.Asynchronous|FileOptions.SequentialScan);

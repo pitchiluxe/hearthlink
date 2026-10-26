@@ -1,0 +1,44 @@
+using HearthLink;
+using HearthLink.Core;
+using System.Drawing.Imaging;
+
+// The real Viewer against a hand-driven host end, on the fixture's UI thread.
+static class ViewerChecks
+{
+    static byte[] Jpeg(int seed)
+    {
+        using var bitmap=new Bitmap(64,48); using(var g=Graphics.FromImage(bitmap)) g.Clear(Color.FromArgb(seed*40%255,90,160));
+        using var stream=new MemoryStream(); bitmap.Save(stream,ImageFormat.Jpeg); return stream.ToArray();
+    }
+    public static async Task Run(MainWindow window,IdentityStore host,IdentityStore controller,Action<bool,string> check)
+    {
+        var (viewerEnd,hostEnd)=await FileChecks.Linked(host,controller);
+        // A minimized (or fully covered) window gets no paint messages; the session must still flow.
+        var viewer=await window.OnUi(()=> { var v=new Viewer(viewerEnd,"minimized",false,["1: test"]) {ShowInTaskbar=false,WindowState=FormWindowState.Minimized}; v.Show(); return v; });
+        using var limit=new CancellationTokenSource(TimeSpan.FromSeconds(15));
+        var acked=new List<long>();
+        try
+        {
+            for(long sequence=1;sequence<=3;sequence++)
+            {
+                await hostEnd.Send(new("frame",Frame:new(Jpeg((int)sequence),64,48,0,sequence,100,100,10)),limit.Token);
+                while(true) { var p=await hostEnd.Read(limit.Token); if(p.Kind=="presented") { acked.Add(p.Sequence); break; } }
+            }
+        }
+        catch(OperationCanceledException) { }
+        await window.OnUi(()=> { viewer.Close(); return true; });
+        hostEnd.Dispose();
+        check(acked.SequenceEqual([1L,2L,3L]),"a minimized viewer still acknowledges every frame");
+
+        bool ended=false;
+        var notice=await window.OnUi(()=> { var n=new SessionNotice("TECHNOBIZ-ASUS",true,()=>ended=true,TimeSpan.FromMilliseconds(300)); n.Show(); return n; });
+        bool fullAtStart=await window.OnUi(()=>!notice.Collapsed && notice.Height>100);
+        await Task.Delay(1000);
+        var collapsed=await window.OnUi(()=>(notice.Collapsed,notice.Visible,notice.TopMost,notice.Height,notice.Bounds));
+        var area=Screen.PrimaryScreen!.WorkingArea;
+        check(fullAtStart && collapsed.Collapsed && collapsed.Visible && collapsed.TopMost && collapsed.Height<=40 && area.Contains(collapsed.Bounds),"session notice collapses to a small tab that stays on screen and on top");
+        bool expanded=await window.OnUi(()=> { notice.Expand(); return !notice.Collapsed && notice.Height>100; });
+        await window.OnUi(()=> { notice.EndButton.PerformClick(); notice.CloseAfterSession(); return true; });
+        check(expanded && ended,"the collapsed tab expands back to End session");
+    }
+}

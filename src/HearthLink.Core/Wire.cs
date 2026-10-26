@@ -8,7 +8,7 @@ public sealed record Packet(string Kind, string? Text=null, string? Name=null, s
 public static class Wire
 {
     public const int MaxLength=16*1024*1024;
-    public const int ProtocolVersion=2;
+    public const int ProtocolVersion=3;
     const int VideoHeader=36;
     const int VideoMagic=0x484C4632;
     const int ChunkMagic=0x484C4332;
