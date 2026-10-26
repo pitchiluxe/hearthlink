@@ -215,7 +215,8 @@ public sealed class MainWindow : Form
             if(on && incoming!=null) check=new(false,busy);
             if(!check.Verified)
             {
-                identity.Audit(identity.Fingerprint,UnattendedAccess.ChangeRefused);
+                // The raw Windows answer (an enum name or HRESULT, never user data) tells a real missing PIN from a misreport.
+                identity.Audit(identity.Fingerprint,check.Code==null?UnattendedAccess.ChangeRefused:$"{UnattendedAccess.ChangeRefused} ({check.Code})");
                 if(check.Problem!=null) MessageBox.Show(this,check.Problem,"HearthLink • unattended access",MessageBoxButtons.OK,MessageBoxIcon.Information);
                 return false;
             }

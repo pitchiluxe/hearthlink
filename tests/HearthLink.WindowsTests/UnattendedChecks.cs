@@ -15,13 +15,20 @@ static class UnattendedChecks
         await window.OnUi(()=> { window.VerifyPresence=reason=> { asked.Add(reason); return Task.FromResult(answer); }; return true; });
         Task<bool> Change(bool on)=>window.OnUi(()=>window.ChangeUnattended(on)).Unwrap();
 
+        {
+            string notSetUp=WindowsHello.Unavailable(Windows.Security.Credentials.UI.UserConsentVerifierAvailability.NotConfiguredForUser);
+            string noDevice=WindowsHello.Unavailable(Windows.Security.Credentials.UI.UserConsentVerifierAvailability.DeviceNotPresent);
+            string policy=WindowsHello.Unavailable(Windows.Security.Credentials.UI.UserConsentVerifierAvailability.DisabledByPolicy);
+            string misreport=WindowsHello.Failed(Windows.Security.Credentials.UI.UserConsentVerificationResult.NotConfiguredForUser)!;
+            check(notSetUp.Contains("not set up") && !noDevice.Contains("not set up") && policy.Contains("policy") && !policy.Contains("PIN") && misreport.Contains("said it was ready") && !misreport.Contains("not set up") && WindowsHello.Failed(Windows.Security.Credentials.UI.UserConsentVerificationResult.Canceled)==null,"each Windows Hello answer gets its own message; only a missing enrollment says not set up");
+        }
         check(!new IdentityStore(Path.Combine(root,"unattended-default")).Config.Unattended && !host.Config.Unattended,"unattended access is off by default");
         bool changed=await Change(true);
         check(!changed && asked.Count==1 && !host.Config.Unattended && !Saved() && Count(UnattendedAccess.ChangeRefused)==1,"cancelled Windows Hello leaves unattended access off");
-        answer=new(false,WindowsHello.SetUpHint);
+        answer=new(false,WindowsHello.SetUpHint,"availability:NotConfiguredForUser");
         var refused=Change(true);
         string explained=await NativeDialogs.Answer(uiThread,Ok,TimeSpan.FromSeconds(15));
-        check(!await refused && explained.Contains("Sign-in options") && !host.Config.Unattended,"without Windows Hello set up, the host explains how to add a PIN and stays attended");
+        check(!await refused && explained.Contains("Sign-in options") && !host.Config.Unattended && Count(UnattendedAccess.ChangeRefused+" (availability:NotConfiguredForUser)")==1,"without Windows Hello set up, the host explains how to add a PIN and stays attended");
 
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
