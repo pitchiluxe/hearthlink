@@ -19,6 +19,34 @@ static async Task<(RelayStream Client,RelayStream Server)> RelayPair()
     }
     finally { tcpListener.Stop(); }
 }
+/// <summary>A loopback WebSocket server that accepts one upgrade; returns its ws:// address and whether a client completed the handshake.</summary>
+static (Uri Address,Task<bool> Accepted) WebSocketServer()
+{
+    var listener=new TcpListener(IPAddress.Loopback,0); listener.Start();
+    var address=new Uri($"ws://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/v1/status");
+    return (address,Task.Run(async()=>
+    {
+        try
+        {
+            using var client=await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            var stream=client.GetStream(); var request=new System.Text.StringBuilder(); var one=new byte[1];
+            while(!request.ToString().EndsWith("\r\n\r\n") && await stream.ReadAsync(one)==1) request.Append((char)one[0]);
+            string key=request.ToString().Split("\r\n").First(l=>l.StartsWith("Sec-WebSocket-Key:",StringComparison.OrdinalIgnoreCase))[18..].Trim();
+            string accept=Convert.ToBase64String(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.ASCII.GetBytes(key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+            await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"));
+            return true;
+        }
+        catch(Exception) { return false; }
+        finally { listener.Stop(); }
+    }));
+}
+/// <summary>A "proxy" that accepts connections and never answers, like a dead free public proxy. Counts connections it received.</summary>
+static (WebProxy Proxy,Func<int> Connections,Action Stop) StalledProxy()
+{
+    var listener=new TcpListener(IPAddress.Loopback,0); listener.Start(); int connections=0; var held=new List<TcpClient>();
+    _=Task.Run(async()=> { try { while(true) { var c=await listener.AcceptTcpClientAsync(); lock(held) held.Add(c); Interlocked.Increment(ref connections); } } catch(Exception) { } });
+    return (new WebProxy($"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}"),()=>Volatile.Read(ref connections),()=> { listener.Stop(); lock(held) held.ForEach(c=>c.Dispose()); });
+}
 { var free=new TcpListener(IPAddress.Loopback,0); free.Start(); Connection.Port=((IPEndPoint)free.LocalEndpoint).Port; free.Stop(); }
 var root=Path.Combine(Path.GetTempPath(),"HearthLink-tests-"+Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
@@ -26,6 +54,23 @@ int passed=0;
 void Check(bool value,string name) { if(!value) throw new Exception("FAIL: "+name); Console.WriteLine("PASS: "+name); passed++; }
 try
 {
+    {
+        // A system proxy set by a free "VPN" (Windows user proxy) must not stall the relay: direct goes first.
+        var (proxy,proxyConnections,stopProxy)=StalledProxy();
+        try
+        {
+            var (viaProxy,_)=WebSocketServer();
+            using(var routed=new ClientWebSocket()) { routed.Options.Proxy=proxy; bool stalled=false; try { await routed.ConnectAsync(viaProxy,new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token); } catch(OperationCanceledException) { stalled=true; } Check(stalled,"fixture: a WebSocket routed through the stalled proxy hangs"); }
+            var (direct,accepted)=WebSocketServer(); var clock=System.Diagnostics.Stopwatch.StartNew();
+            using(var socket=await RelayClient.Dial(direct,proxy,new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token))
+                Check(socket.State==WebSocketState.Open && await accepted && clock.Elapsed<TimeSpan.FromSeconds(3),"relay dials direct when a stalled system proxy is set");
+            int before=proxyConnections(); bool failed=false;
+            var closed=new TcpListener(IPAddress.Loopback,0); closed.Start(); var unreachable=new Uri($"ws://127.0.0.1:{((IPEndPoint)closed.LocalEndpoint).Port}/v1/status"); closed.Stop();
+            try { using var _=await RelayClient.Dial(unreachable,proxy,new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token); } catch(Exception) { failed=true; }
+            Check(failed && proxyConnections()>before,"relay falls back to the system proxy when direct fails");
+        }
+        finally { stopProxy(); }
+    }
     var host=new IdentityStore(Path.Combine(root,"host"));
     var controller=new IdentityStore(Path.Combine(root,"controller"));
     var stranger=new IdentityStore(Path.Combine(root,"stranger"));
