@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.3.0 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.3.1 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.3.1 adds the "Created by Erick Omari" credit to the app sidebar.
 
 Version 0.3.0 connects paired PCs on any network through the HearthLink relay (`relay/`, a Cloudflare Worker). Both PCs connect outbound, so no firewall rule or router setup is needed; mutual TLS with pinned fingerprints still runs end to end, and the relay cannot read sessions ([trust boundary](docs/ARCHITECTURE.md#relay-trust-boundary)). Pairing uses a 12-digit code and trusts both directions; existing one-way 0.2.x pairings upgrade automatically the next time the two PCs connect. Direct LAN connections are an opt-in fallback. **Update both PCs to 0.3.0**: a 0.2.x PC shows an update message instead of connecting.
 
