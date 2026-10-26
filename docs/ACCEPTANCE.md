@@ -53,7 +53,7 @@ Two PCs (Task 9):
 
 - [ ] In a control session, **Send files** with three files. Each appears in the host's `Downloads\HearthLink`; the strip shows progress, then "Sent 3 files".
 - [ ] **Get files** opens the host's user folder and lists drives. Open a subfolder, go Up, download two files. They appear in this PC's `Downloads\HearthLink`; **Open folder** shows them.
-- [ ] Drag three files from Explorer onto the remote screen: all three arrive. Dragging a folder shows "folder skipped". (One-PC check 2026-10-25: three files dragged onto a test viewer arrived with exact sizes.)
+- [ ] Drag three files from Explorer onto the remote screen: all three arrive. Drag a folder with subfolders (one empty): the same tree appears in the other PC's `Downloads\HearthLink`; dragging it again creates `name (2)`. (One-PC checks 2026-10-25: three files, then a folder tree with an empty subfolder plus a loose file, dragged onto a test viewer, arrived complete with exact sizes.)
 - [ ] The display and quality menu buttons open and switch; quality offers Responsive, Balanced, Full detail, Sharp and Best.
 - [ ] Send a file with the same name twice: the host keeps both, the second as `name (2).ext`.
 - [ ] Start a 1 GB transfer and **Cancel**: the strip says "Transfer stopped" and neither PC keeps a partial file.

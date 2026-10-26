@@ -74,11 +74,10 @@ public sealed class Viewer : Form
             screen.DragDrop+=async(_,e)=>
             {
                 if(e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
-                var (files,folders)=TransferStrip.Dropped(paths);
-                string skipped=folders==0?"":folders==1?"1 folder skipped: drop the files inside it":$"{folders} folders skipped: drop the files inside them";
-                if(files.Length==0) { if(skipped.Length>0) strip.Notice(skipped); return; }
-                await strip.Send(files);
-                if(skipped.Length>0) strip.Notice(skipped);
+                var items=TransferStrip.Expand(paths);
+                if(items.Count==0) { strip.Notice("Nothing to send: those names cannot be copied."); return; }
+                if(items.Count>=TransferStrip.MaxItems) { strip.Notice($"Too many items: drop fewer than {TransferStrip.MaxItems} files and folders at a time."); return; }
+                await strip.Send(items);
             };
         }
         bar.Controls.AddRange([fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();

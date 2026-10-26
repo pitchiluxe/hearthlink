@@ -65,6 +65,7 @@ public sealed class FileHost(string receiveFolder)
                     case "list": await c.Send(List(request.Text??""),lifetime); break;
                     case "get": await Get(c,request.Text??"",lifetime); break;
                     case "put": await Put(c,request,lifetime); break;
+                    case "folder": await Folder(c,request.Name??"",lifetime); break;
                     default: return;
                 }
             }
@@ -107,16 +108,34 @@ public sealed class FileHost(string receiveFolder)
             await FileLink.Send(c,stream,stream.Length,null,token);
         }
     }
+    /// <summary>The receive folder joined with a relative path from the other PC, or null if any segment is unsafe or the result would leave the receive folder.</summary>
+    string? Inside(string relative)
+    {
+        string[] segments; try { segments=FileNames.SplitRelative(relative); } catch(InvalidDataException) { return null; }
+        string root=Path.GetFullPath(receiveFolder), full=Path.GetFullPath(Path.Combine([root,..segments]));
+        return full.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase) ? full : null;
+    }
+    string Relative(string full)=>Path.GetRelativePath(Path.GetFullPath(receiveFolder),full);
+    /// <summary>Creates a folder for a sent folder tree. A single-segment (top) folder gets a unique name so a second copy never merges into the first.</summary>
+    async Task Folder(Connection c,string relative,CancellationToken token)
+    {
+        if(Inside(relative) is not {} full) { await c.Send(Denied("That folder name is not allowed."),token); return; }
+        if(!relative.Contains('\\')) { Directory.CreateDirectory(receiveFolder); full=FileNames.Unique(receiveFolder,relative); }
+        Directory.CreateDirectory(full);
+        await c.Send(new("folder-ok",Name:Relative(full)),token);
+    }
     async Task Put(Connection c,Packet request,CancellationToken token)
     {
         string name=request.Name??""; long length=request.Sequence;
-        if(!FilePolicy.ValidName(name)) { await c.Send(Denied("That file name is not allowed."),token); return; }
+        // A name may be a path inside a folder the controller created with "folder" ("Album\2026\photo.jpg").
+        if(Inside(name) is not {} target) { await c.Send(Denied("That file name is not allowed."),token); return; }
         if(length<0 || length>FilePolicy.MaxFileBytes) { await c.Send(Denied("Files over 2 GiB cannot be copied."),token); return; }
-        Directory.CreateDirectory(receiveFolder);
-        string destination=FileNames.Unique(receiveFolder,name);
+        string folder=Path.GetDirectoryName(target)!;
+        Directory.CreateDirectory(folder);
+        string destination=FileNames.Unique(folder,Path.GetFileName(target));
         await c.Send(new("go"),token);
         string saved=await FileLink.Receive(c,destination,length,null,token);
-        await c.Send(new("saved",Name:Path.GetFileName(saved)),token);
+        await c.Send(new("saved",Name:Relative(saved)),token);
     }
 }
 /// <summary>Controller side of a files connection. One operation at a time; after a cancelled or failed transfer, open a new connection.</summary>
@@ -138,12 +157,18 @@ public sealed class FileClient(Connection c) : IDisposable
         Directory.CreateDirectory(localFolder);
         return await FileLink.Receive(c,FileNames.Unique(localFolder,reply.Name!),reply.Sequence,progress,token);
     }
-    /// <summary>Sends a local file to the host's receive folder; returns the name it was saved under.</summary>
-    public async Task<string> Put(string localPath,IProgress<long>? progress,CancellationToken token)
+    /// <summary>Creates a folder in the host's receive folder; a top-level name comes back unique ("Album (2)"). Returns the folder's path relative to the receive folder.</summary>
+    public async Task<string> Folder(string relative,CancellationToken token)
+    {
+        await c.Send(new("folder",Name:relative),token);
+        return Expect(await c.Read(token),"folder-ok").Name??"";
+    }
+    /// <summary>Sends a local file to the host's receive folder, optionally to a path inside a folder made with <see cref="Folder"/>; returns the relative name it was saved under.</summary>
+    public async Task<string> Put(string localPath,IProgress<long>? progress,CancellationToken token,string? remoteName=null)
     {
         await using var stream=new FileStream(localPath,FileMode.Open,FileAccess.Read,FileShare.Read,FilePolicy.ChunkBytes,FileOptions.Asynchronous|FileOptions.SequentialScan);
         if(stream.Length>FilePolicy.MaxFileBytes) throw new InvalidOperationException("Files over 2 GiB cannot be copied.");
-        await c.Send(new("put",Name:Path.GetFileName(localPath),Sequence:stream.Length),token);
+        await c.Send(new("put",Name:remoteName??Path.GetFileName(localPath),Sequence:stream.Length),token);
         Expect(await c.Read(token),"go");
         await FileLink.Send(c,stream,stream.Length,progress,token);
         return Expect(await c.Read(token),"saved").Name??"";

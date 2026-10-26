@@ -86,10 +86,12 @@ static class FileChecks
         string receive=Path.Combine(root,"file-receive"), local=Path.Combine(root,"file-local"), source=Path.Combine(root,"file-source");
         Directory.CreateDirectory(source); Directory.CreateDirectory(local);
         {
-            string dropped=Path.Combine(root,"dropped"); Directory.CreateDirectory(Path.Combine(dropped,"Album"));
-            string a=Path.Combine(dropped,"a.txt"), b=Path.Combine(dropped,"b.pdf"); File.WriteAllText(a,"a"); File.WriteAllText(b,"b");
-            var drop=TransferStrip.Dropped([a,Path.Combine(dropped,"Album"),b,Path.Combine(dropped,"gone.txt")]);
-            check(drop.Files.SequenceEqual([a,b]) && drop.Folders==1,"dropped files are sent in order and folders are counted, not sent");
+            string dropped=Path.Combine(root,"dropped"), album=Path.Combine(dropped,"Album");
+            Directory.CreateDirectory(Path.Combine(album,"Sub")); Directory.CreateDirectory(Path.Combine(album,"Empty"));
+            File.WriteAllText(Path.Combine(album,"a.txt"),"aa"); File.WriteAllText(Path.Combine(album,"Sub","b.txt"),"b"); string loose=Path.Combine(dropped,"c.txt"); File.WriteAllText(loose,"ccc");
+            var drop=TransferStrip.Expand([album,loose,Path.Combine(dropped,"gone.txt")]);
+            check(drop.Select(o=>o.Relative).SequenceEqual(["","a.txt","Empty","Sub","Sub\\b.txt","c.txt"]) && drop.Select(o=>o.Local==null).SequenceEqual([true,false,true,true,false,false])
+                && drop.Take(5).All(o=>o.Root==0 && o.RootName=="Album") && drop[5].Root==-1 && drop[1].Size==2 && drop[5].Size==3,"a dropped folder expands into its folders and files, folder first");
         }
         using var lifetime=new CancellationTokenSource(TimeSpan.FromMinutes(3));
         async Task<(FileClient Client,Task Serving,Connection Host)> Open()
@@ -108,6 +110,11 @@ static class FileChecks
                 string again=await client.Put(sent,null,lifetime.Token);
                 check(again=="report (2).pdf" && File.Exists(Path.Combine(receive,"report (2).pdf")) && File.ReadAllBytes(Path.Combine(receive,"report.pdf")).SequenceEqual(data),"put never overwrites");
 
+                string top=await client.Folder("Album",lifetime.Token), duplicate=await client.Folder("Album",lifetime.Token);
+                check(top=="Album" && duplicate=="Album (2)" && Directory.Exists(Path.Combine(receive,"Album (2)")),"a sent folder never merges into an existing one");
+                string nested=await client.Folder("Album\\2026\\Empty",lifetime.Token);
+                string inFolder=await client.Put(sent,null,lifetime.Token,"Album\\2026\\report.pdf");
+                check(nested=="Album\\2026\\Empty" && Directory.Exists(Path.Combine(receive,"Album","2026","Empty")) && inFolder=="Album\\2026\\report.pdf" && File.ReadAllBytes(Path.Combine(receive,"Album","2026","report.pdf")).SequenceEqual(data),"files and empty subfolders keep their place inside a sent folder");
                 string hostFile=Path.Combine(source,"photo.jpg"); byte[] photo=RandomFile(hostFile,2*1024*1024+512*1024);
                 string got=await client.Get(hostFile,local,null,lifetime.Token);
                 check(got==Path.Combine(local,"photo.jpg") && File.ReadAllBytes(got).SequenceEqual(photo),"get copies a host file");
@@ -140,6 +147,10 @@ static class FileChecks
                 var serving=new FileHost(receive).Serve(h,lifetime.Token);
                 var reply=await c.Read();
                 check(reply.Kind=="denied" && !File.Exists(Path.Combine(root,"escape.txt")) && Directory.GetFiles(receive).Length==2,"put rejects unsafe names");
+                await c.Send(new("put",Name:"Album\\..\\..\\climb.txt",Sequence:4)); var climb=await c.Read();
+                await c.Send(new("folder",Name:"..")); var up=await c.Read();
+                await c.Send(new("folder",Name:"C:\\Windows")); var absolute=await c.Read();
+                check(climb.Kind=="denied" && up.Kind=="denied" && absolute.Kind=="denied" && !File.Exists(Path.Combine(root,"climb.txt")),"folder paths cannot leave the receive folder");
             }
         }
         {

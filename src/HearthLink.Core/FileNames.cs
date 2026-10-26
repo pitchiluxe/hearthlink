@@ -17,6 +17,15 @@ public static class FileNames
         }
         throw new IOException("Too many files named "+name+".");
     }
+    public const int MaxDepth=32, MaxRelativeLength=400;
+    /// <summary>A relative path from the other PC ("Album\2026\photo.jpg") as its segments; each must pass <see cref="FilePolicy.ValidName"/>, so ".." and drive or root paths are refused.</summary>
+    public static string[] SplitRelative(string path)
+    {
+        if(string.IsNullOrEmpty(path) || path.Length>MaxRelativeLength) throw new InvalidDataException("Unsafe relative path.");
+        string[] segments=path.Split('\\');
+        if(segments.Length>MaxDepth || !segments.All(FilePolicy.ValidName)) throw new InvalidDataException("Unsafe relative path.");
+        return segments;
+    }
     public static string Encode(IEnumerable<FileEntry> entries)=>JsonSerializer.Serialize(entries.Take(MaxEntries));
     /// <summary>Reads a listing from the other PC, dropping entries with unsafe names or negative sizes.</summary>
     public static IReadOnlyList<FileEntry> Decode(string json)

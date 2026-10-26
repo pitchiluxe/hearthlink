@@ -24,17 +24,52 @@ public sealed class TransferStrip : Panel
         Disposed+=(_,_)=> { running?.Cancel(); fade.Dispose(); };
     }
     public void Cancel()=>running?.Cancel();
-    /// <summary>Splits paths dropped from Explorer into existing files, in drop order, and a count of folders, which are not sent yet.</summary>
-    public static (string[] Files,int Folders) Dropped(IEnumerable<string> paths)
+    /// <summary>One thing to send: a file (Local set) or a folder to create (Local null). Root numbers the dropped folder it belongs to (-1 for a loose file); Relative is its path inside that folder.</summary>
+    public sealed record Outgoing(string? Local,int Root,string RootName,string Relative,long Size);
+    public const int MaxItems=20000;
+    /// <summary>
+    /// Turns paths dropped from Explorer into what to send, in order: each folder before its contents, then its files, then its
+    /// subfolders. Linked folders (junctions) are not followed, and names the other PC would refuse are left out.
+    /// </summary>
+    public static IReadOnlyList<Outgoing> Expand(IEnumerable<string> paths)
     {
-        var all=paths.ToArray();
-        return (all.Where(File.Exists).ToArray(),all.Count(Directory.Exists));
+        var items=new List<Outgoing>(); int roots=0;
+        void Walk(string folder,int root,string rootName,string relative)
+        {
+            if(items.Count>=MaxItems) return;
+            items.Add(new(null,root,rootName,relative,0));
+            var options=new EnumerationOptions {IgnoreInaccessible=true,AttributesToSkip=FileAttributes.ReparsePoint|FileAttributes.System};
+            string Inner(string name)=>relative.Length==0?name:relative+"\\"+name;
+            bool Fits(string name)=>FilePolicy.ValidName(name) && Inner(name).Split('\\').Length<FileNames.MaxDepth && Inner(name).Length+rootName.Length<FileNames.MaxRelativeLength;
+            foreach(var file in new DirectoryInfo(folder).EnumerateFiles("*",options).Where(f=>Fits(f.Name)).OrderBy(f=>f.Name,StringComparer.OrdinalIgnoreCase))
+                if(items.Count<MaxItems) items.Add(new(file.FullName,root,rootName,Inner(file.Name),file.Length));
+            foreach(var sub in new DirectoryInfo(folder).EnumerateDirectories("*",options).Where(d=>Fits(d.Name)).OrderBy(d=>d.Name,StringComparer.OrdinalIgnoreCase))
+                Walk(sub.FullName,root,rootName,Inner(sub.Name));
+        }
+        foreach(string path in paths)
+        {
+            if(File.Exists(path) && FilePolicy.ValidName(Path.GetFileName(path))) items.Add(new(path,-1,"",Path.GetFileName(path),new FileInfo(path).Length));
+            else if(Directory.Exists(path) && Path.GetFileName(path.TrimEnd('\\')) is {} name && FilePolicy.ValidName(name)) Walk(path,roots++,name,"");
+        }
+        return items;
     }
     /// <summary>Shows a short message in the strip for 10 s.</summary>
     public void Notice(string message) { text.Text=message; folder.Visible=false; cancel.Visible=false; progress.Visible=false; Visible=true; BringToFront(); fade.Stop(); fade.Start(); }
-    /// <summary>Sends local files to the other PC's Downloads\HearthLink.</summary>
-    public Task Send(IReadOnlyList<string> paths)=>Run("Sending",paths.Select(p=>(Path.GetFileName(p),new FileInfo(p).Length)).ToArray(),(client,i,report,token)=>client.Put(paths[i],report,token),
-        count=>$"Sent {Files(count)} to Downloads\\HearthLink on the other PC",false);
+    /// <summary>Sends local files and folders (see <see cref="Expand"/>) to the other PC's Downloads\HearthLink.</summary>
+    public Task Send(IReadOnlyList<string> paths)=>Send(Expand(paths));
+    public Task Send(IReadOnlyList<Outgoing> items)
+    {
+        // The host may rename a dropped folder ("Album (2)"); later items of that folder go under the name it chose.
+        var placed=new Dictionary<int,string>();
+        string Remote(Outgoing o)=>o.Root<0?o.Relative:o.Relative.Length==0?placed[o.Root]:placed[o.Root]+"\\"+o.Relative;
+        return Run("Sending",items.Select(o=>(o.Local==null?"folder "+(o.Relative.Length==0?o.RootName:o.RootName+"\\"+o.Relative):Path.GetFileName(o.Local),o.Size)).ToArray(),async(client,i,report,token)=>
+        {
+            var o=items[i];
+            if(o.Local==null && o.Relative.Length==0) placed[o.Root]=await client.Folder(o.RootName,token);
+            else if(o.Local==null) await client.Folder(Remote(o),token);
+            else await client.Put(o.Local,report,token,o.Root<0?null:Remote(o));
+        },count=>$"Sent {Files(items.Take(count).Count(o=>o.Local!=null))} to Downloads\\HearthLink on the other PC",false);
+    }
     /// <summary>Copies files from the other PC into this PC's Downloads\HearthLink.</summary>
     public Task Get(IReadOnlyList<(string Path,long Size)> files)=>Run("Getting",files.Select(f=>(Path.GetFileName(f.Path),f.Size)).ToArray(),(client,i,report,token)=>client.Get(files[i].Path,LocalFolder,report,token),
         count=>$"Saved {Files(count)} to Downloads\\HearthLink",true);

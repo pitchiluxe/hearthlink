@@ -96,6 +96,9 @@ Check(FilePolicy.ValidName("Project report.pdf"),"ordinary file name accepted");
         Check(refused,"unique name refuses unsafe names");
     }
     finally { Directory.Delete(folder,true); }
+    Check(FileNames.SplitRelative("Album\\2026\\photo.jpg").SequenceEqual(["Album","2026","photo.jpg"]) && FileNames.SplitRelative("notes.txt").SequenceEqual(["notes.txt"]),"relative paths split into safe segments");
+    bool Refused(string path) { try { FileNames.SplitRelative(path); return false; } catch(InvalidDataException) { return true; } }
+    Check(Refused("Album\\..\\x.txt") && Refused("..\\x.txt") && Refused("C:\\x.txt") && Refused("\\x.txt") && Refused("Album\\\\x.txt") && Refused("Album/x.txt") && Refused("") && Refused(string.Join("\\",Enumerable.Repeat("d",33))),"relative paths cannot escape, be absolute, be empty or nest too deep");
     var when=new DateTimeOffset(2026,10,25,12,0,0,TimeSpan.Zero);
     string json=FileNames.Encode([new("a.txt",false,12,when),new("Docs",true,0,when)]).Replace("]",",{\"Name\":\"..\\\\evil\",\"Folder\":false,\"Size\":1,\"Modified\":\"2026-10-25T12:00:00+00:00\"}]");
     var entries=FileNames.Decode(json);
