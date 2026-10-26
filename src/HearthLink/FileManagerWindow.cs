@@ -221,7 +221,7 @@ public sealed class FileManagerWindow : Form
         active=local;
         transfers=new TransferStrip(openFiles);
         transfers.Finished+=async()=> { await local.ReloadAll(); await remote.ReloadAll(); };
-        assistant=new AssistantPanel(Describe,answer=>TransferAssistant.ReadPlan(answer,local.Entries,remote.Entries),Run,plan=>TransferAssistant.Explain(plan,local.Folder,remote.Folder));
+        assistant=new AssistantPanel(Describe,(answer,request)=>TransferAssistant.ReadPlan(answer,local.Entries,remote.Entries,request,Names(local)),Run,plan=>TransferAssistant.Explain(plan,local.Folder,remote.Folder));
         transfers.Started+=batch=>assistant.Watch(batch,again==null?null:Again);
         transfers.Ended+=async(batch,message,failed)=>await assistant.Finished(batch,message,failed);
         var toRemote=Brand.Style(new Button {Text="→",Width=44,Height=40,Font=new("Segoe UI",14,FontStyle.Bold)},true);
@@ -282,9 +282,15 @@ public sealed class FileManagerWindow : Form
         while(transfers.Busy) await Task.Delay(100);
         await redo(without);
     }
-    /// <summary>Runs a plan the helper proposed and the user accepted; its items were already matched to the source folder.</summary>
+    /// <summary>
+    /// Runs a plan the helper proposed and the user accepted; its items were already matched to the source folder. Sending
+    /// items the user neither selected nor named needs one more confirmation, since folder names can try to steer the model.
+    /// </summary>
     Task Run(TransferPlan plan)
     {
+        if(plan.ToRemote && plan.Unasked.Count>0 && MessageBox.Show(this,
+            $"The helper wants to SEND these to the other PC, but you did not select or name them:\n\n{string.Join("\n",plan.Unasked.Select(i=>"• "+i))}\n\nSend them to {remote.Folder}?",
+            "Check before sending",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return Task.CompletedTask;
         var source=plan.ToRemote?local:remote;
         var picks=plan.Items.Select(name=>source.Entries.FirstOrDefault(e=>e.Name==name)).OfType<FileEntry>().Select(e=>(Path.Combine(source.Folder,e.Name),e.Folder,e.Size)).ToArray();
         if(picks.Length==0) { transfers.Notice("Those items are no longer in the folder. Ask the helper again."); return Task.CompletedTask; }

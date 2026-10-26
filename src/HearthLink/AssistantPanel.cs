@@ -14,22 +14,22 @@ public sealed class AssistantPanel : Panel
     readonly ComboBox models=new() {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,Font=new("Segoe UI",9)};
     readonly Label state=new() {Dock=DockStyle.Top,Height=40,ForeColor=Brand.Muted,Font=new("Segoe UI",9),Padding=new(2,4,2,0)};
     readonly TextBox log=new() {Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BackColor=Color.White,BorderStyle=BorderStyle.None,Font=new("Segoe UI",9.5f)};
-    readonly Label proposal=new() {Dock=DockStyle.Fill,ForeColor=Brand.Ink,Font=new("Segoe UI",9,FontStyle.Bold),AutoEllipsis=true};
+    readonly TextBox proposal=new() {Dock=DockStyle.Fill,Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,BorderStyle=BorderStyle.None,BackColor=Brand.Canvas,ForeColor=Brand.Ink,Font=new("Segoe UI",9,FontStyle.Bold)};
     readonly Button run=Brand.Style(new Button {Text="Run",Dock=DockStyle.Right,Width=70},true);
     readonly Button dismiss=Brand.Style(new Button {Text="✕",Dock=DockStyle.Right,Width=40});
-    readonly Panel plan=new() {Dock=DockStyle.Bottom,Height=60,Padding=new(0,6,0,6),Visible=false};
+    readonly Panel plan=new() {Dock=DockStyle.Bottom,Height=110,Padding=new(0,6,0,6),Visible=false};
     readonly TextBox ask=new() {Dock=DockStyle.Fill,PlaceholderText="Ask, e.g. copy ANNAIR-mobile without node_modules"};
     readonly Button send=Brand.Style(new Button {Text="Ask",Dock=DockStyle.Right,Width=64},true);
     readonly Func<string,IReadOnlyList<AiMessage>> context;
     readonly Func<TransferPlan,Task> execute;
     readonly Func<TransferPlan,string> explainPlan;
-    readonly Func<string,(string Reply,TransferPlan? Plan)> read;
+    readonly Func<string,string,(string Reply,TransferPlan? Plan)> read;
     readonly List<AiMessage> history=[];
     Func<Task>? pending;
     bool busy;
     /// <param name="describe">The chat for a request: instructions, then both folders and the request.</param>
-    /// <param name="check">Checks the model's answer against the folders it was shown.</param>
-    public AssistantPanel(Func<string,IReadOnlyList<AiMessage>> describe,Func<string,(string Reply,TransferPlan? Plan)> check,Func<TransferPlan,Task> runPlan,Func<TransferPlan,string> explain)
+    /// <param name="check">Checks the model's answer against the folders it was shown and the request.</param>
+    public AssistantPanel(Func<string,IReadOnlyList<AiMessage>> describe,Func<string,string,(string Reply,TransferPlan? Plan)> check,Func<TransferPlan,Task> runPlan,Func<TransferPlan,string> explain)
     {
         context=describe; read=check; execute=runPlan; explainPlan=explain;
         Dock=DockStyle.Right; Width=340; BackColor=Brand.Canvas; Padding=new(8,8,8,4);
@@ -86,7 +86,7 @@ public sealed class AssistantPanel : Panel
             var messages=context(request);
             // Earlier turns help follow-ups ("and the other folder too"); only the last few are kept.
             string answer=await ollama.Chat(Model,[messages[0],..history.TakeLast(6),..messages.Skip(1)],TransferAssistant.PlanFormat(),lifetime.Token);
-            var (reply,found)=read(answer);
+            var (reply,found)=read(answer,request);
             history.Add(new("user",request)); history.Add(new("assistant",reply));
             Say(reply);
             if(found!=null) Offer(explainPlan(found),()=>execute(found));
