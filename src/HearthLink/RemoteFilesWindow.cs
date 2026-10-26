@@ -52,6 +52,7 @@ public sealed class RemoteFilesWindow : Form
             var listing=await client.List(target,lifetime.Token);
             folder=listing.Folder; path.Text=folder;
             if(listing.Drives.Length>0) { drives.Items.Clear(); drives.Items.AddRange(listing.Drives); }
+            drives.SelectedItem=drives.Items.Cast<string>().FirstOrDefault(d=>string.Equals(d,Path.GetPathRoot(folder),StringComparison.OrdinalIgnoreCase));
             list.BeginUpdate(); list.Items.Clear();
             foreach(var entry in listing.Entries) list.Items.Add(new ListViewItem([entry.Name,entry.Folder?"Folder":SizeText(entry.Size),entry.Modified.ToLocalTime().ToString("g")]) {Tag=entry});
             list.EndUpdate();

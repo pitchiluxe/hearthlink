@@ -9,7 +9,7 @@ namespace HearthLink;
 /// </summary>
 public static class FileLink
 {
-    public const int Window=1024*1024;
+    public const int Window=4*1024*1024;
     public static async Task Send(Connection c,Stream source,long length,IProgress<long>? progress,CancellationToken token)
     {
         var id=Guid.NewGuid(); using var hash=IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
