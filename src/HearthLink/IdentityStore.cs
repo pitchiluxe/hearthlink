@@ -17,6 +17,8 @@ public sealed class Settings
     /// <summary>A relay the user chose; empty means the app's built-in <see cref="RelayClient.DefaultUrl"/>, so saved settings follow app updates.</summary>
     public string RelayUrl { get; set; }="";
     public bool LanListener { get; set; }
+    /// <summary>Paired controllers start sessions without the Allow dialog. Off by default; only <see cref="MainWindow.ChangeUnattended"/> changes it, after Windows Hello.</summary>
+    public bool Unattended { get; set; }
 }
 public sealed class IdentityStore
 {

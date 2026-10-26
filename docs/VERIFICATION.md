@@ -1,5 +1,9 @@
 # Verification report — 2026-10-22
 
+## Unattended access, phase 2 (2026-10-26, unreleased)
+
+Core suite **76 passed** and Windows suite **75 passed** on TECHNOBIZ-ASUS. New core checks cover `UnattendedAccess.SkipsApproval` (off, unpaired, empty, case-changed and revoked fingerprints never skip approval), the 30-minute `IdleClock` and which packets count as controller input. New Windows checks drive the real `MainWindow` and `HostServer` with Windows Hello replaced by a stub: off by default; a cancelled or unavailable Hello check changes nothing (and the set-up hint is shown); it cannot be turned on during a remote session; verified Hello turns it on and off and saves it, and turning it off ends an unattended session; a paired controller connects without the dialog, with the banner shown and `unattended-connected` recorded; an unpaired PC is still denied; input keeps the session open past the idle limit and silence ends it with `unattended-idle-disconnected`; after turning it off the Allow dialog returns. A one-off WinForms probe on TECHNOBIZ-ASUS (2026-10-26) returned `availability=Available result=Verified` from the same `UserConsentVerifier` / `UserConsentVerifierInterop.RequestVerificationForWindowAsync` calls. A refused change is written to history with the raw Windows answer, for example `unattended-change-refused (availability:NotConfiguredForUser)`. The 30-minute limit on two physical PCs is not exercised by these checks.
+
 ## Update and website release 0.2.1
 
 The completed retry build passed **41 core checks and 17 Windows checks** and compiled the self-contained installer with Inno Setup. Log: `artifacts/build-0.2.1-retry.log`. Eight update-core checks cover exact release metadata/checksum pairing, no reinstall/downgrade, byte integrity, overwrite refusal, corrupt-download cleanup, HTTPS downgrade rejection, cancellation cleanup, and external publisher rejection. Two new Windows checks verify malformed release handling by the update coordinator and reset of stale downloaded-installer state when a different release becomes available.
@@ -44,7 +48,7 @@ Use [ACCEPTANCE.md](ACCEPTANCE.md). First establish an attended A→B session, p
 
 ## Remaining implementation
 
-Automatic host discovery; unattended access and administrator enablement; service/session broker and startup after reboot; text clipboard; file transfer and validation tests; confirmed remote restart and automatic reconnection; richer session-history interface; broader authentication throttling; robust handling of secure-desktop transitions; independent security review and extensive compatibility/performance validation.
+Automatic host discovery; unattended access at the lock screen and after restart (unattended access for a signed-in host exists since phase 2); start at sign-in; service/session broker and startup after reboot; text clipboard; file transfer and validation tests; confirmed remote restart and automatic reconnection; richer session-history interface; broader authentication throttling; robust handling of secure-desktop transitions; independent security review and extensive compatibility/performance validation.
 
 Basic monitor switching, image fit/full-screen and persistent enrollment exist in source, but their real mixed-DPI/multi-monitor behavior is pending manual acceptance. Current history records metadata only; it is not a complete forensic audit system. First milestone uses GDI JPEG frames around a 100ms pacing interval, not an optimized video codec. There is no assurance yet of usable performance on the user's actual machines.
 
