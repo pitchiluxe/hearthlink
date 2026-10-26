@@ -31,7 +31,8 @@ public sealed class TransferStrip : Panel
     public sealed record Outgoing(string? Local,int Root,string RootName,string Relative,long Size);
     /// <summary>One thing to get: a host file (Remote set) or a folder to create here (Remote null), numbered and placed like <see cref="Outgoing"/>.</summary>
     public sealed record Incoming(string? Remote,int Root,string RootName,string Relative,long Size);
-    public const int MaxItems=20000;
+    /// <summary>Far above any real batch; only stops a listing that never ends (for example from a hostile host) before it fills memory.</summary>
+    public const int MaxItems=1_000_000;
     static string Inner(string relative,string name)=>relative.Length==0?name:relative+"\\"+name;
     static bool Fits(string rootName,string relative,string name)=>FilePolicy.ValidName(name) && Inner(relative,name).Split('\\').Length<FileNames.MaxDepth && Inner(relative,name).Length+rootName.Length<FileNames.MaxRelativeLength;
     /// <summary>
@@ -124,7 +125,7 @@ public sealed class TransferStrip : Panel
         {
             using var client=new FileClient(await open(cts.Token));
             var jobs=await prepare(client,cts.Token);
-            if(jobs.Count>=MaxItems) throw new InvalidOperationException($"Too many items: pick fewer than {MaxItems} files and folders at a time.");
+            if(jobs.Count>=MaxItems) throw new InvalidOperationException($"Too many items: pick fewer than {MaxItems:N0} files and folders at a time.");
             for(int i=0;i<jobs.Count;i++)
             {
                 var job=jobs[i]; int index=i;
