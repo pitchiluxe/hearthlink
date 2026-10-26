@@ -301,8 +301,9 @@ public sealed class MainWindow : Form
         Connection? connection=null;
         try
         {
-            connection=await Reach(host,name);
-            connectionProgress.Text="Waiting for session approval on "+name;
+            (connection,bool direct)=await Reach(host,name);
+            string route=direct?"direct":"relay";
+            connectionProgress.Text="Waiting for session approval on "+name+" • "+route;
             await connection.Send(new("session",Control:control.Checked,Value:Wire.ProtocolVersion));
             using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
             var reply=await connection.Read(timeout.Token);
@@ -311,21 +312,33 @@ public sealed class MainWindow : Form
             connectionProgress.Text="Connected to "+name;
             identity.Audit(host.Fingerprint,"outbound-connected");
             if(identity.UpgradeTrust(host.Fingerprint,null)) TrustChanged();
-            new Viewer(connection,name,control.Checked,reply.Monitors??["Display 1"]).Show(this); connection=null;
+            new Viewer(connection,name,control.Checked,reply.Monitors??["Display 1"],route).Show(this); connection=null;
         }
         finally { connection?.Dispose(); }
     }
-    /// <summary>Relay first; the saved LAN address only when the relay cannot reach the host at all.</summary>
-    async Task<Connection> Reach(Peer host,string name)
+    /// <summary>
+    /// Tries the relay and the saved LAN address at once and keeps the first pinned connection, so PCs on the same network
+    /// get the direct path's lower latency. The other attempt is closed when it finishes.
+    /// </summary>
+    async Task<(Connection Connection,bool Direct)> Reach(Peer host,string name)
     {
-        Exception relayFailure;
-        try { return await RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,CancellationToken.None); }
-        catch(RelayException e) when(e.CloseCode is 0 or RelayProtocol.Offline) { relayFailure=e; }
-        catch(ArgumentException e) { relayFailure=e; }
-        if(host.Address.Length==0) throw new InvalidOperationException(relayFailure is RelayException {CloseCode:RelayProtocol.Offline} ? $"Not reachable through the relay. Check HearthLink is running on {name}." : relayFailure.Message,relayFailure);
-        connectionProgress.Text="Relay did not reach "+name+" • trying your network…";
-        try { return await Connection.Connect(host.Address,identity,host.Fingerprint); }
-        catch(Exception e) when(e is IOException or System.Net.Sockets.SocketException or OperationCanceledException) { throw new InvalidOperationException($"Not reachable through the relay or on your network. Check HearthLink is running on {name}.",e); }
+        var relay=RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,CancellationToken.None);
+        Task<Connection>? lan=host.Address.Length>0?Connection.Connect(host.Address,identity,host.Fingerprint):null;
+        var running=new List<Task<Connection>> {relay}; if(lan!=null) running.Add(lan);
+        while(running.Count>0)
+        {
+            var done=await Task.WhenAny(running); running.Remove(done);
+            if(!done.IsCompletedSuccessfully) continue;
+            foreach(var other in running) _=other.ContinueWith(t=> { if(t.IsCompletedSuccessfully) t.Result.Dispose(); else _=t.Exception; },TaskScheduler.Default);
+            return (done.Result,done==lan);
+        }
+        var relayFailure=relay.Exception!.InnerException!;
+        // Anything but "unreachable" or "offline" (not paired, no answer, wrong identity) is the real answer.
+        if(relayFailure is not (RelayException {CloseCode:0 or RelayProtocol.Offline} or ArgumentException)) throw relayFailure;
+        if(lan==null) throw new InvalidOperationException(relayFailure is RelayException {CloseCode:RelayProtocol.Offline} ? $"Not reachable through the relay. Check HearthLink is running on {name}." : relayFailure.Message,relayFailure);
+        var lanFailure=lan.Exception!.InnerException!;
+        if(lanFailure is AuthenticationException) throw lanFailure;
+        throw new InvalidOperationException($"Not reachable through the relay or on your network. Check HearthLink is running on {name}.",lanFailure);
     }
     async Task RefreshHosts()
     {
