@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.3.2 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.4.0 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.4.0 adds an optional **AI helper** in the file manager (needs Ollama on the controlling PC; see File transfer below) and lifts the 20,000-item transfer limit to 1,000,000, so large project folders copy in one go.
 
 Version 0.3.2 keeps relay connections working while a proxy-based "VPN" app (such as Aurora VPN free mode) is on: HearthLink reaches the relay directly first and uses the Windows proxy only if that fails.
 
