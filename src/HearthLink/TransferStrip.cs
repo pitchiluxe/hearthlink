@@ -24,6 +24,14 @@ public sealed class TransferStrip : Panel
         Disposed+=(_,_)=> { running?.Cancel(); fade.Dispose(); };
     }
     public void Cancel()=>running?.Cancel();
+    /// <summary>Splits paths dropped from Explorer into existing files, in drop order, and a count of folders, which are not sent yet.</summary>
+    public static (string[] Files,int Folders) Dropped(IEnumerable<string> paths)
+    {
+        var all=paths.ToArray();
+        return (all.Where(File.Exists).ToArray(),all.Count(Directory.Exists));
+    }
+    /// <summary>Shows a short message in the strip for 10 s.</summary>
+    public void Notice(string message) { text.Text=message; folder.Visible=false; cancel.Visible=false; progress.Visible=false; Visible=true; BringToFront(); fade.Stop(); fade.Start(); }
     /// <summary>Sends local files to the other PC's Downloads\HearthLink.</summary>
     public Task Send(IReadOnlyList<string> paths)=>Run("Sending",paths.Select(p=>(Path.GetFileName(p),new FileInfo(p).Length)).ToArray(),(client,i,report,token)=>client.Put(paths[i],report,token),
         count=>$"Sent {Files(count)} to Downloads\\HearthLink on the other PC",false);

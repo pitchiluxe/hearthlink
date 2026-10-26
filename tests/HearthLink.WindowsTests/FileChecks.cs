@@ -85,6 +85,12 @@ static class FileChecks
         var host=new IdentityStore(Path.Combine(root,"file-host")); var controller=new IdentityStore(Path.Combine(root,"file-controller"));
         string receive=Path.Combine(root,"file-receive"), local=Path.Combine(root,"file-local"), source=Path.Combine(root,"file-source");
         Directory.CreateDirectory(source); Directory.CreateDirectory(local);
+        {
+            string dropped=Path.Combine(root,"dropped"); Directory.CreateDirectory(Path.Combine(dropped,"Album"));
+            string a=Path.Combine(dropped,"a.txt"), b=Path.Combine(dropped,"b.pdf"); File.WriteAllText(a,"a"); File.WriteAllText(b,"b");
+            var drop=TransferStrip.Dropped([a,Path.Combine(dropped,"Album"),b,Path.Combine(dropped,"gone.txt")]);
+            check(drop.Files.SequenceEqual([a,b]) && drop.Folders==1,"dropped files are sent in order and folders are counted, not sent");
+        }
         using var lifetime=new CancellationTokenSource(TimeSpan.FromMinutes(3));
         async Task<(FileClient Client,Task Serving,Connection Host)> Open()
         {

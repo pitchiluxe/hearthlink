@@ -68,6 +68,18 @@ public sealed class Viewer : Form
                 remoteFiles.Show(this);
             };
             bar.Controls.AddRange([send,get]);
+            // Files dragged from Explorer onto the remote screen are sent like Send files.
+            screen.AllowDrop=true;
+            screen.DragEnter+=(_,e)=>e.Effect=e.Data?.GetDataPresent(DataFormats.FileDrop)==true?DragDropEffects.Copy:DragDropEffects.None;
+            screen.DragDrop+=async(_,e)=>
+            {
+                if(e.Data?.GetData(DataFormats.FileDrop) is not string[] paths) return;
+                var (files,folders)=TransferStrip.Dropped(paths);
+                string skipped=folders==0?"":folders==1?"1 folder skipped: drop the files inside it":$"{folders} folders skipped: drop the files inside them";
+                if(files.Length==0) { if(skipped.Length>0) strip.Notice(skipped); return; }
+                await strip.Send(files);
+                if(skipped.Length>0) strip.Notice(skipped);
+            };
         }
         bar.Controls.AddRange([fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();
         // Added after the screen so it docks first and the screen fills what is left.
