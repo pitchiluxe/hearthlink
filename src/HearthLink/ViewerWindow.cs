@@ -35,18 +35,16 @@ public sealed class Viewer : Form
     readonly Stopwatch barIdle=new();
     TimeSpan barHold;
     // Open while a file dialog or browser is up, so the toolbar does not slide away under it.
-    bool holdBar;
+    bool holdBar, menuOpen;
     TransferStrip? transfers;
     RemoteFilesWindow? remoteFiles;
     public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null)
     {
         connection=c; control=allowControl;
         Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(640,400); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
-        var displays=new ComboBox {DropDownStyle=ComboBoxStyle.DropDownList,Width=180,Margin=new(0,5,8,0),Font=Font}; displays.Items.AddRange(monitors); displays.SelectedIndex=0;
-        displays.SelectedIndexChanged+=(_,_)=> {Volatile.Write(ref desiredMonitor,displays.SelectedIndex); Post(new("monitor",Value:displays.SelectedIndex));};
-        var profile=new ComboBox {DropDownStyle=ComboBoxStyle.DropDownList,Width=138,Margin=new(0,5,8,0),Font=Font};
-        profile.Items.AddRange(["Responsive","Balanced","Full detail"]); profile.SelectedIndex=0;
-        profile.SelectedIndexChanged+=(_,_)=>Post(new("profile",Value:profile.SelectedIndex));
+        // Menu buttons, as in TeamViewer's toolbar: a menu pops up above everything, where combo box lists failed to open on some PCs.
+        var displays=Choice(monitors,0,index=> {Volatile.Write(ref desiredMonitor,index); Post(new("monitor",Value:index));});
+        var profile=Choice(DesktopCapture.Profiles,0,index=>Post(new("profile",Value:index)));
         var fullscreen=Brand.Style(new Button {Text="Full screen",AutoSize=true}); fullscreen.Click+=(_,_)=>ToggleFull();
         var disconnect=Brand.Style(new Button {Text="Disconnect",AutoSize=true},true); disconnect.Click+=(_,_)=>Close();
         status.Text=(control?"Connected • Control":"Connected • View only")+" • "+route;
@@ -78,7 +76,7 @@ public sealed class Viewer : Form
         barTimer.Tick+=(_,_)=>
         {
             bool over=bar.Visible && bar.Bounds.Contains(PointToClient(Cursor.Position));
-            if(over || holdBar || displays.DroppedDown || profile.DroppedDown) { barIdle.Restart(); return; }
+            if(over || holdBar || menuOpen) { barIdle.Restart(); return; }
             if(bar.Visible && barIdle.Elapsed>barHold) { bar.Visible=false; barTimer.Stop(); screen.Focus(); }
         };
         Shown+=(_,_)=>ShowBar(TimeSpan.FromSeconds(3));
@@ -110,6 +108,26 @@ public sealed class Viewer : Form
             var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); connection.Dispose();
             try {await writing;} catch(OperationCanceledException) { }
         };
+    }
+    /// <summary>A toolbar button showing the current option ("Balanced ▾") that opens a menu of the options.</summary>
+    Button Choice(string[] options,int selected,Action<int> chosen)
+    {
+        var button=Brand.Style(new Button {Text=options[selected]+"  ▾",AutoSize=true,Margin=new(0,0,8,0)});
+        var menu=new ContextMenuStrip {Font=Font,ShowCheckMargin=true,ShowImageMargin=false};
+        for(int i=0;i<options.Length;i++)
+        {
+            int index=i; var item=new ToolStripMenuItem(options[i]) {Checked=i==selected};
+            item.Click+=(_,_)=>
+            {
+                foreach(ToolStripMenuItem other in menu.Items) other.Checked=other==item;
+                button.Text=options[index]+"  ▾"; chosen(index);
+            };
+            menu.Items.Add(item);
+        }
+        menu.Opened+=(_,_)=>menuOpen=true; menu.Closed+=(_,_)=>menuOpen=false;
+        button.Click+=(_,_)=>menu.Show(button,new Point(0,button.Height));
+        button.Disposed+=(_,_)=>menu.Dispose();
+        return button;
     }
     /// <summary>Reveals the toolbar; it hides again once the pointer has been away from it for <paramref name="hold"/>.</summary>
     void ShowBar(TimeSpan hold)

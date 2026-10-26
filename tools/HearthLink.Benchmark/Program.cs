@@ -7,7 +7,7 @@ string output=args.FirstOrDefault(a=>a.EndsWith(".json",StringComparison.Ordinal
 if(args.Contains("--optimized"))
 {
     var results=new List<object>();
-    for(int profile=0;profile<3;profile++)
+    for(int profile=0;profile<DesktopCapture.Profiles.Length;profile++)
     {
         using var capture=new DesktopCapture {SkipUnchanged=false};
         var captures=new List<double>(); var decodes=new List<double>(); var cycles=new List<double>(); var sizes=new List<int>();
@@ -21,7 +21,7 @@ if(args.Contains("--optimized"))
             double remaining=1000d/DesktopCapture.Profile(profile).Fps-cycle.Elapsed.TotalMilliseconds; if(remaining>1) await Task.Delay(TimeSpan.FromMilliseconds(remaining));
             cycle.Stop(); if(i>=5) {captures.Add(stage.Elapsed.TotalMilliseconds); decodes.Add(decode.Elapsed.TotalMilliseconds); cycles.Add(cycle.Elapsed.TotalMilliseconds); sizes.Add((int)wire.Length);}
         }
-        results.Add(new {profile=new[]{"Responsive","Balanced","Full detail"}[profile],resolution=$"{width}x{height}",samples=cycles.Count,captureEncodeMs=Median(captures),serializeDecodeDrawMs=Median(decodes),frameIntervalMs=Median(cycles),pipelineFps=1000/Median(cycles),averageWireBytes=sizes.Average()});
+        results.Add(new {profile=DesktopCapture.Profiles[profile],resolution=$"{width}x{height}",samples=cycles.Count,captureEncodeMs=Median(captures),serializeDecodeDrawMs=Median(decodes),frameIntervalMs=Median(cycles),pipelineFps=1000/Median(cycles),averageWireBytes=sizes.Average()});
     }
     var report=new {build="0.2.0 candidate",results,physicalPcTest=false,notes="Local live capture, binary memory transport, decode and CPU draw. No network or display-photon measurement; lower-resolution modes trade detail for responsiveness. No images saved."};
     Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(output))!); File.WriteAllText(output,JsonSerializer.Serialize(report,new JsonSerializerOptions {WriteIndented=true})); Console.WriteLine(File.ReadAllText(output)); return;

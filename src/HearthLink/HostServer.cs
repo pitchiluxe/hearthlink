@@ -148,7 +148,7 @@ public sealed class HostServer : IDisposable
                             if(p.Kind=="disconnect") break;
                             if(p.Kind=="presented") {window.Acknowledge(p.Sequence); continue;}
                             if(p.Kind=="monitor" && p.Value>=0 && p.Value<Screen.AllScreens.Length) { Volatile.Write(ref monitor,p.Value); continue; }
-                            if(p.Kind=="profile" && p.Value>=0 && p.Value<=2) {Volatile.Write(ref profile,p.Value); continue;}
+                            if(p.Kind=="profile" && p.Value>=0 && p.Value<DesktopCapture.Profiles.Length) {Volatile.Write(ref profile,p.Value); continue;}
                             if(!request.Control) continue;
                             if(p.Kind=="release")
                             {

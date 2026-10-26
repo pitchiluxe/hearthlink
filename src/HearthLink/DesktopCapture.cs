@@ -23,7 +23,9 @@ public sealed class DesktopCapture : IDisposable
     [DllImport("gdi32.dll",SetLastError=true)] static extern bool StretchBlt(IntPtr target,int x,int y,int width,int height,IntPtr source,int sourceX,int sourceY,int sourceWidth,int sourceHeight,uint operation);
     [DllImport("gdi32.dll",SetLastError=true)] static extern bool BitBlt(IntPtr target,int x,int y,int width,int height,IntPtr source,int sourceX,int sourceY,uint operation);
     [DllImport("gdi32.dll")] static extern int SetStretchBltMode(IntPtr dc,int mode);
-    public static (int Width,int Height,int Quality,int Fps) Profile(int profile)=>profile switch {1=>(1600,900,65,45),2=>(8192,8192,75,30),_=>(1280,720,55,60)};
+    /// <summary>Quality choices in the viewer, by index. Sharp and Best are full resolution at higher JPEG quality; Best is near-lossless and suits direct connections.</summary>
+    public static readonly string[] Profiles=["Responsive","Balanced","Full detail","Sharp","Best"];
+    public static (int Width,int Height,int Quality,int Fps) Profile(int profile)=>profile switch {1=>(1600,900,65,45),2=>(8192,8192,75,30),3=>(8192,8192,85,30),4=>(8192,8192,95,30),_=>(1280,720,55,60)};
     /// <summary>Captures and encodes <paramref name="monitor"/>; null when the screen is unchanged since the last frame returned for the same monitor and profile.</summary>
     public VideoFrame? Capture(int monitor,long sequence,int profile=0,int roundTripMilliseconds=0)
     {
