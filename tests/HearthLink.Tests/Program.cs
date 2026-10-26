@@ -205,5 +205,6 @@ static System.Security.Cryptography.X509Certificates.X509Certificate2 TestCertif
 }
 UnattendedChecks.Run(Check);
 await UpdateChecks.Run(Check);
+await AssistantChecks.Run(Check);
 Console.WriteLine($"{passed} checks passed.");
 void CheckQuiet(bool value) {if(!value) throw new Exception("Fixture enqueue failed");}

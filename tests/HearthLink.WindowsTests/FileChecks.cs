@@ -165,6 +165,10 @@ static class FileChecks
             var drop=TransferStrip.Expand([album,loose,Path.Combine(dropped,"gone.txt")]);
             check(drop.Select(o=>o.Relative).SequenceEqual(["","a.txt","Empty","Sub","Sub\\b.txt","c.txt"]) && drop.Select(o=>o.Local==null).SequenceEqual([true,false,true,true,false,false])
                 && drop.Take(5).All(o=>o.Root==0 && o.RootName=="Album") && drop[5].Root==-1 && drop[1].Size==2 && drop[5].Size==3,"a dropped folder expands into its folders and files, folder first");
+            Directory.CreateDirectory(Path.Combine(album,"node_modules","react")); File.WriteAllText(Path.Combine(album,"node_modules","react","index.js"),"x"); File.WriteAllText(Path.Combine(album,"Sub","clip.MP4"),"v");
+            var lean=TransferStrip.Expand([album],["node_modules","*.mp4"]);
+            check(lean.Select(o=>o.Relative).SequenceEqual(["","a.txt","Empty","Sub","Sub\\b.txt"]),"skip rules leave named folders and file types out of a dropped folder");
+            check(TransferAssistant.Heavy(TransferStrip.Expand([album]).Select(o=>o.Relative),1).SequenceEqual([("node_modules",2)]),"heavy folders are counted from the expanded batch");
         }
         using var lifetime=new CancellationTokenSource(TimeSpan.FromMinutes(3));
         async Task<(FileClient Client,Task Serving,Connection Host)> Open()
