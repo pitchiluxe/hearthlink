@@ -13,13 +13,19 @@ public sealed class DesktopCapture : IDisposable
     Bitmap? surface;
     Graphics? graphics;
     int quality=-1;
+    // Pixels of the last frame sent, and what it was sent for; an identical capture is not re-encoded or re-sent.
+    byte[] last=[], scratch=[];
+    (int Monitor,int Profile) lastFor=(-1,-1);
+    /// <summary>False encodes every capture, for benchmarks.</summary>
+    public bool SkipUnchanged { get; init; }=true;
     [DllImport("user32.dll")] static extern IntPtr GetDC(IntPtr window);
     [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr window,IntPtr dc);
     [DllImport("gdi32.dll",SetLastError=true)] static extern bool StretchBlt(IntPtr target,int x,int y,int width,int height,IntPtr source,int sourceX,int sourceY,int sourceWidth,int sourceHeight,uint operation);
     [DllImport("gdi32.dll",SetLastError=true)] static extern bool BitBlt(IntPtr target,int x,int y,int width,int height,IntPtr source,int sourceX,int sourceY,uint operation);
     [DllImport("gdi32.dll")] static extern int SetStretchBltMode(IntPtr dc,int mode);
     public static (int Width,int Height,int Quality,int Fps) Profile(int profile)=>profile switch {1=>(1600,900,65,45),2=>(8192,8192,75,30),_=>(1280,720,55,60)};
-    public VideoFrame Capture(int monitor,long sequence,int profile=0,int roundTripMilliseconds=0)
+    /// <summary>Captures and encodes <paramref name="monitor"/>; null when the screen is unchanged since the last frame returned for the same monitor and profile.</summary>
+    public VideoFrame? Capture(int monitor,long sequence,int profile=0,int roundTripMilliseconds=0)
     {
         var started=Stopwatch.GetTimestamp(); var displays=Screen.AllScreens;
         if(monitor<0 || monitor>=displays.Length) throw new InvalidDataException("Display no longer available.");
@@ -41,6 +47,7 @@ public sealed class DesktopCapture : IDisposable
             if(!copied) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(),"Windows blocked desktop capture.");
         }
         finally {if(target!=IntPtr.Zero) graphics!.ReleaseHdc(target); ReleaseDC(IntPtr.Zero,source);}
+        if(SkipUnchanged && !Changed(monitor,profile)) return null;
         int capture=(int)Math.Min(int.MaxValue,Stopwatch.GetElapsedTime(started).TotalMicroseconds);
         var encoding=Stopwatch.GetTimestamp();
         if(quality!=settings.Quality)
@@ -51,6 +58,19 @@ public sealed class DesktopCapture : IDisposable
         encoded.SetLength(0); encoded.Position=0; surface.Save(encoded,Jpeg,parameters);
         int encode=(int)Math.Min(int.MaxValue,Stopwatch.GetElapsedTime(encoding).TotalMicroseconds);
         return new(encoded.ToArray(),size.Width,size.Height,monitor,sequence,capture,encode,roundTripMilliseconds);
+    }
+    bool Changed(int monitor,int profile)
+    {
+        var data=surface!.LockBits(new Rectangle(0,0,surface.Width,surface.Height),ImageLockMode.ReadOnly,PixelFormat.Format24bppRgb);
+        try
+        {
+            int bytes=Math.Abs(data.Stride)*data.Height;
+            if(scratch.Length!=bytes) scratch=new byte[bytes];
+            Marshal.Copy(data.Scan0,scratch,0,bytes);
+            if(lastFor==(monitor,profile) && scratch.AsSpan().SequenceEqual(last)) return false;
+            (last,scratch)=(scratch,last); lastFor=(monitor,profile); return true;
+        }
+        finally { surface.UnlockBits(data); }
     }
     public void Dispose() {graphics?.Dispose(); surface?.Dispose(); encoded.Dispose(); parameters.Dispose();}
 }

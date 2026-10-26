@@ -53,13 +53,20 @@ rejected=false; try {await Wire.Read(new MemoryStream(damaged));} catch(InvalidD
 Check(rejected,"oversized video dimensions rejected before JPEG allocation");
 using(var window=new FrameWindow())
 {
-    long first=await window.AcquireAsync(); window.MarkSent(first);
-    var second=window.AcquireAsync();
-    Check(!second.IsCompleted,"slow viewer cannot queue another frame");
-    Check(!window.Acknowledge(first+1),"wrong presentation acknowledgement ignored");
-    Check(window.Acknowledge(first),"correct presentation acknowledgement releases next frame");
-    long next=await second;
-    Check(next==first+1 && !window.Acknowledge(first),"stale acknowledgement cannot release a later frame");
+    var sent=new List<long>();
+    for(int i=0;i<FrameWindow.Depth;i++) { long s=await window.AcquireAsync(); window.MarkSent(s); sent.Add(s); }
+    var blocked=window.AcquireAsync();
+    Check(FrameWindow.Depth==3 && !blocked.IsCompleted,"three frames may await presentation, a fourth waits");
+    Check(!window.Acknowledge(sent[^1]+1),"acknowledgement of an unsent frame ignored");
+    // The viewer paints only the newest frame, so its acknowledgement covers every earlier one.
+    Check(window.Acknowledge(sent[1]),"presentation acknowledgement accepted");
+    long fourth=await blocked; window.MarkSent(fourth);
+    var fifth=window.AcquireAsync();
+    Check(fifth.IsCompleted,"acknowledgement releases the acknowledged frame and all earlier ones");
+    long abandoned=await fifth; window.Abandon(abandoned);
+    var sixth=window.AcquireAsync();
+    Check(sixth.IsCompleted && !window.Acknowledge(sent[0]) && !window.Acknowledge(abandoned),"abandoned and already acknowledged frames are ignored");
+    window.MarkSent(await sixth);
     using var cancel=new CancellationTokenSource(); var waiting=window.AcquireAsync(cancel.Token); cancel.Cancel();
     bool cancelled=false; try {await waiting;} catch(OperationCanceledException) {cancelled=true;}
     Check(cancelled,"waiting video producer cancels cleanly");

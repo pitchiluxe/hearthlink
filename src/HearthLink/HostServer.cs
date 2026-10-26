@@ -115,8 +115,9 @@ public sealed class HostServer : IDisposable
                                 if(!identity.Config.Controllers.Contains(fingerprint)) break;
                                 long cycle=Stopwatch.GetTimestamp(); int mode=Volatile.Read(ref profile);
                                 var frame=capture.Capture(Volatile.Read(ref monitor),sequence,mode,window.RoundTripMilliseconds);
-                                stop.Token.ThrowIfCancellationRequested(); window.MarkSent(sequence);
-                                await connection.Send(new("frame",Frame:frame),stop.Token);
+                                stop.Token.ThrowIfCancellationRequested();
+                                if(frame==null) window.Abandon(sequence);
+                                else { window.MarkSent(sequence); await connection.Send(new("frame",Frame:frame),stop.Token); }
                                 double remaining=1000d/DesktopCapture.Profile(mode).Fps-Stopwatch.GetElapsedTime(cycle).TotalMilliseconds;
                                 if(remaining>1) await Task.Delay(TimeSpan.FromMilliseconds(remaining),stop.Token);
                             }

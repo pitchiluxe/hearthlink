@@ -9,13 +9,13 @@ if(args.Contains("--optimized"))
     var results=new List<object>();
     for(int profile=0;profile<3;profile++)
     {
-        using var capture=new DesktopCapture();
+        using var capture=new DesktopCapture {SkipUnchanged=false};
         var captures=new List<double>(); var decodes=new List<double>(); var cycles=new List<double>(); var sizes=new List<int>();
         using var target=new Bitmap(Screen.PrimaryScreen!.Bounds.Width,Screen.PrimaryScreen.Bounds.Height); using var painter=Graphics.FromImage(target);
         int width=0,height=0;
         for(int i=0;i<35;i++)
         {
-            var cycle=Stopwatch.StartNew(); var stage=Stopwatch.StartNew(); var frame=capture.Capture(0,i+1,profile); stage.Stop(); width=frame.Width; height=frame.Height;
+            var cycle=Stopwatch.StartNew(); var stage=Stopwatch.StartNew(); var frame=capture.Capture(0,i+1,profile)!; stage.Stop(); width=frame.Width; height=frame.Height;
             var decode=Stopwatch.StartNew(); using var wire=new MemoryStream(); await Wire.Write(wire,new("frame",Frame:frame)); wire.Position=0;
             var received=await Wire.Read(wire); using var image=FrameDecoder.Decode(received.Frame!); painter.DrawImage(image,0,0,target.Width,target.Height); decode.Stop();
             double remaining=1000d/DesktopCapture.Profile(profile).Fps-cycle.Elapsed.TotalMilliseconds; if(remaining>1) await Task.Delay(TimeSpan.FromMilliseconds(remaining));
