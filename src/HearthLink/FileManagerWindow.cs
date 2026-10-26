@@ -99,6 +99,8 @@ public sealed class FilePane : Panel
     IReadOnlyList<DriveEntry> driveList=[];
     IReadOnlyList<FileEntry> shown=[];
     public string Folder { get; private set; }="";
+    /// <summary>What the open folder holds, as last listed.</summary>
+    public IReadOnlyList<FileEntry> Entries=>shown;
     public string Title { get; }
     public event Action<FilePane>? Activated;
     public FilePane(string title,IFileSource files)
@@ -199,14 +201,17 @@ public sealed class FilePane : Panel
     static bool Expected(Exception e)=>e is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException or AuthenticationException or ArgumentException or OperationCanceledException;
     public static string SizeText(long bytes)=>bytes switch { <1024=>$"{bytes} b", <1024*1024=>$"{bytes/1024d:F1} k", <1024L*1024*1024=>$"{bytes/1048576d:F1} M", _=>$"{bytes/1073741824d:F1} G" };
 }
-/// <summary>Two panes, this PC on the left and the other PC on the right, with copy in both directions (F5), new folder (F7) and refresh.</summary>
+/// <summary>Two panes, this PC on the left and the other PC on the right, with copy in both directions (F5), new folder (F7), refresh and the AI helper (F9).</summary>
 public sealed class FileManagerWindow : Form
 {
     readonly CancellationTokenSource lifetime=new();
     readonly FilePane local, remote;
     readonly RemoteFiles remoteFiles;
     readonly TransferStrip transfers;
+    readonly AssistantPanel assistant;
     FilePane active;
+    /// <summary>Starts the last copy again with more names left out, for the helper's "copy again without node_modules".</summary>
+    Func<IReadOnlyCollection<string>,Task>? again;
     public FileManagerWindow(string remoteName,Func<CancellationToken,Task<Connection>> openFiles)
     {
         Text="HearthLink • File transfer • "+remoteName; ClientSize=new(1240,760); MinimumSize=new(900,520); Icon=Brand.AppIcon; Font=new("Segoe UI",10); BackColor=Brand.Canvas; KeyPreview=true; StartPosition=FormStartPosition.CenterParent;
@@ -216,6 +221,9 @@ public sealed class FileManagerWindow : Form
         active=local;
         transfers=new TransferStrip(openFiles);
         transfers.Finished+=async()=> { await local.ReloadAll(); await remote.ReloadAll(); };
+        assistant=new AssistantPanel(Describe,(answer,request)=>TransferAssistant.ReadPlan(answer,local.Entries,remote.Entries,request,Names(local)),Run,plan=>TransferAssistant.Explain(plan,local.Folder,remote.Folder));
+        transfers.Started+=batch=>assistant.Watch(batch,again==null?null:Again);
+        transfers.Ended+=async(batch,message,failed)=>await assistant.Finished(batch,message,failed);
         var toRemote=Brand.Style(new Button {Text="→",Width=44,Height=40,Font=new("Segoe UI",14,FontStyle.Bold)},true);
         var toLocal=Brand.Style(new Button {Text="←",Width=44,Height=40,Font=new("Segoe UI",14,FontStyle.Bold)},true);
         var tips=new ToolTip(); tips.SetToolTip(toRemote,"Copy selected local files to the remote folder (F5)"); tips.SetToolTip(toLocal,"Copy selected remote files to the local folder (F5)");
@@ -226,24 +234,26 @@ public sealed class FileManagerWindow : Form
         panes.ColumnStyles.Add(new(SizeType.Percent,50)); panes.ColumnStyles.Add(new(SizeType.Absolute,56)); panes.ColumnStyles.Add(new(SizeType.Percent,50));
         panes.RowStyles.Add(new(SizeType.Percent,100));
         panes.Controls.Add(local,0,0); panes.Controls.Add(middle,1,0); panes.Controls.Add(remote,2,0);
-        var keys=new TableLayoutPanel {Dock=DockStyle.Bottom,Height=40,ColumnCount=4,RowCount=1,Padding=new(8,2,8,4)};
-        for(int i=0;i<4;i++) keys.ColumnStyles.Add(new(SizeType.Percent,25));
+        var keys=new TableLayoutPanel {Dock=DockStyle.Bottom,Height=40,ColumnCount=5,RowCount=1,Padding=new(8,2,8,4)};
+        for(int i=0;i<5;i++) keys.ColumnStyles.Add(new(SizeType.Percent,20));
         Button Key(string label,Func<Task> action) { var b=Brand.Style(new Button {Text=label,Dock=DockStyle.Fill,Margin=new(2)}); b.Click+=async(_,_)=>await action(); return b; }
         keys.Controls.Add(Key("F5 Copy",()=>Copy(active)),0,0);
         keys.Controls.Add(Key("F7 New Folder",NewFolder),1,0);
         keys.Controls.Add(Key("Ctrl+R Refresh",ReloadBoth),2,0);
-        keys.Controls.Add(Key("Esc Close",()=> { Close(); return Task.CompletedTask; }),3,0);
-        Controls.Add(panes); Controls.Add(transfers); Controls.Add(keys);
+        keys.Controls.Add(Key("F9 AI helper",ToggleHelper),3,0);
+        keys.Controls.Add(Key("Esc Close",()=> { Close(); return Task.CompletedTask; }),4,0);
+        Controls.Add(panes); Controls.Add(assistant); Controls.Add(transfers); Controls.Add(keys);
         foreach(var pane in new[]{local,remote}) pane.Activated+=p=> { active=p; local.SetActive(p==local); remote.SetActive(p==remote); };
         KeyDown+=async(_,e)=>
         {
             if(e.KeyCode==Keys.F5) { e.Handled=true; await Copy(active); }
             else if(e.KeyCode==Keys.F7) { e.Handled=true; await NewFolder(); }
+            else if(e.KeyCode==Keys.F9) { e.Handled=true; await ToggleHelper(); }
             else if(e.KeyCode==Keys.R && e.Control) { e.Handled=true; await ReloadBoth(); }
             else if(e.KeyCode==Keys.Tab && !e.Control) { e.Handled=true; (active==local?remote:local).List.Focus(); }
-            else if(e.KeyCode==Keys.Escape) { e.Handled=true; Close(); }
+            else if(e.KeyCode==Keys.Escape && !assistant.ContainsFocus) { e.Handled=true; Close(); }
         };
-        Shown+=async(_,_)=> { local.List.Focus(); await Task.WhenAll(local.Start(),remote.Start()); };
+        Shown+=async(_,_)=> { local.List.Focus(); await Task.WhenAll(local.Start(),remote.Start(),assistant.Connect()); };
         FormClosed+=(_,_)=> { transfers.Cancel(); lifetime.Cancel(); remoteFiles.Dispose(); lifetime.Dispose(); };
     }
     async Task ReloadBoth() { await local.ReloadAll(); await remote.ReloadAll(); }
@@ -252,8 +262,51 @@ public sealed class FileManagerWindow : Form
     {
         var picks=from.Selected;
         if(picks.Count==0) { transfers.Notice("Select files or folders to copy first."); return; }
-        if(from==local) { if(remote.Folder.Length==0) return; await transfers.Send(picks.Select(p=>p.Path).ToArray(),remote.Folder); }
-        else { if(local.Folder.Length==0) return; await transfers.Get(picks,local.Folder); }
+        await Copy(from==local,picks,[]);
+    }
+    /// <summary>Copies <paramref name="picks"/> into the folder open on the other side, leaving <paramref name="skip"/> out inside folders.</summary>
+    async Task Copy(bool toRemote,IReadOnlyList<(string Path,bool Folder,long Size)> picks,IReadOnlyCollection<string> skip)
+    {
+        string target=toRemote?remote.Folder:local.Folder;
+        if(target.Length==0) return;
+        if(transfers.Busy) { transfers.Notice("A transfer is already running. Wait or cancel it first."); return; }
+        again=more=>Copy(toRemote,picks,skip.Union(more,StringComparer.OrdinalIgnoreCase).ToArray());
+        if(toRemote) await transfers.Send(picks.Select(p=>p.Path).ToArray(),target,skip);
+        else await transfers.Get(picks,target,skip);
+    }
+    async Task Again(IReadOnlyList<string> without)
+    {
+        var redo=again;
+        if(redo==null) return;
+        transfers.Cancel();
+        while(transfers.Busy) await Task.Delay(100);
+        await redo(without);
+    }
+    /// <summary>
+    /// Runs a plan the helper proposed and the user accepted; its items were already matched to the source folder. Sending
+    /// items the user neither selected nor named needs one more confirmation, since folder names can try to steer the model.
+    /// </summary>
+    Task Run(TransferPlan plan)
+    {
+        if(plan.ToRemote && plan.Unasked.Count>0 && MessageBox.Show(this,
+            $"The helper wants to SEND these to the other PC, but you did not select or name them:\n\n{string.Join("\n",plan.Unasked.Select(i=>"• "+i))}\n\nSend them to {remote.Folder}?",
+            "Check before sending",MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)!=DialogResult.Yes) return Task.CompletedTask;
+        var source=plan.ToRemote?local:remote;
+        var picks=plan.Items.Select(name=>source.Entries.FirstOrDefault(e=>e.Name==name)).OfType<FileEntry>().Select(e=>(Path.Combine(source.Folder,e.Name),e.Folder,e.Size)).ToArray();
+        if(picks.Length==0) { transfers.Notice("Those items are no longer in the folder. Ask the helper again."); return Task.CompletedTask; }
+        return Copy(plan.ToRemote,picks,plan.Skip);
+    }
+    IReadOnlyList<AiMessage> Describe(string request)=>
+    [
+        new("system",TransferAssistant.Instructions),
+        new("user",TransferAssistant.Describe(request,local.Folder,local.Entries,Names(local),remote.Folder,remote.Entries,Names(remote))),
+    ];
+    static string[] Names(FilePane pane)=>pane.Selected.Select(p=>Path.GetFileName(p.Path)).ToArray();
+    Task ToggleHelper()
+    {
+        assistant.Visible=!assistant.Visible;
+        if(assistant.Visible) assistant.Focus(); else active.List.Focus();
+        return Task.CompletedTask;
     }
     async Task NewFolder()
     {

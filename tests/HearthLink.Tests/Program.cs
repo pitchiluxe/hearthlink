@@ -204,5 +204,6 @@ static System.Security.Cryptography.X509Certificates.X509Certificate2 TestCertif
     return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ephemeral.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx),null,System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.UserKeySet);
 }
 await UpdateChecks.Run(Check);
+await AssistantChecks.Run(Check);
 Console.WriteLine($"{passed} checks passed.");
 void CheckQuiet(bool value) {if(!value) throw new Exception("Fixture enqueue failed");}
