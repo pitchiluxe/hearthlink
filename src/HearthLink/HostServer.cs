@@ -15,8 +15,11 @@ public sealed class HostServer : IDisposable
     readonly CancellationTokenSource lifetime=new();
     readonly SemaphoreSlim clients=new(8,8), session=new(1,1);
     CancellationTokenSource? active;
+    SessionFileGrant? files;
     public bool HasActiveSession=>active!=null;
     public bool Listening { get; private set; }
+    /// <summary>Where files sent by a controller land; nothing from the other PC is written anywhere else.</summary>
+    public string ReceiveFolder { get; init; }=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),"Downloads","HearthLink");
     public HostServer(IdentityStore store,MainWindow window,IPAddress? bindAddress=null) { identity=store; ui=window; listener=new(bindAddress??IPAddress.Any,Connection.Port); }
     public void Start() { listener.Start(8); Listening=true; _=Accept(); }
     public void Disconnect() => active?.Cancel();
@@ -84,6 +87,14 @@ public sealed class HostServer : IDisposable
                     await ui.OnUi(()=> { identity.Audit(fingerprint,"untrusted-rejected"); return true; }); return;
                 }
                 if(request.Kind is "probe" or "session") await ui.OnUi(()=>ui.UpgradeTrust(fingerprint,peer));
+                if(request.Kind=="files")
+                {
+                    // Files ride a second connection so a large copy never queues behind the video, and only while the control session that granted them lasts.
+                    var grant=files;
+                    if(grant==null || !grant.Allows(fingerprint,request.Code??"")) { await connection.Send(new("denied",Text:"File transfer needs an active control session."),initial.Token); return; }
+                    initial.CancelAfter(Timeout.InfiniteTimeSpan);
+                    await new FileHost(ReceiveFolder).Serve(connection,grant.Lifetime); return;
+                }
                 if(request.Kind=="probe") { await connection.Send(new("online",Name:identity.Config.Name),initial.Token); return; }
                 if(request.Kind!="session") return;
                 if(request.Value!=Wire.ProtocolVersion) {await connection.Send(new("denied",Text:"Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved."),initial.Token); return;}
@@ -100,7 +111,9 @@ public sealed class HostServer : IDisposable
                     using var stop=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
                     active=stop;
                     await ui.OnUi(()=> { ui.SessionStarted(identity.Config.Controllers.Entries[fingerprint],request.Control,Disconnect); identity.Audit(fingerprint,"connected"); return true; });
-                    await connection.Send(new("ready",Value:Wire.ProtocolVersion,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray()),stop.Token);
+                    var grant=new SessionFileGrant(fingerprint,request.Control,stop.Token);
+                    if(request.Control) files=grant;
+                    await connection.Send(new("ready",Value:Wire.ProtocolVersion,Code:request.Control?grant.Token:null,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray()),stop.Token);
                     int monitor=0,profile=0;
                     using var window=new FrameWindow();
                     var pressed=new HashSet<int>(); var buttons=new HashSet<int>();
@@ -152,7 +165,7 @@ public sealed class HostServer : IDisposable
                         try { await frames; } catch(Exception e) when(e is OperationCanceledException or IOException or ObjectDisposedException or InvalidOperationException or System.ComponentModel.Win32Exception or TimeoutException) { }
                         foreach(int key in pressed) { try { Desktop.Input(new("key",Value:key),monitor); } catch { } }
                         foreach(int button in buttons) { try { Desktop.Input(new("button",Value:button),monitor); } catch { } }
-                        active=null;
+                        active=null; files=null;
                         await ui.OnUi(()=> { ui.SessionEnded(); identity.Audit(fingerprint,"disconnected"); return true; });
                     }
                 }

@@ -34,6 +34,51 @@ static class FileChecks
         await serving;
         return (client,new Connection(serverTransport,ssl));
     }
+    /// <summary>Starts a session on the real host, approving its prompt; frames are acknowledged in the background so the session stays up.</summary>
+    static async Task<(Connection Session,Packet Ready,Task Reader)> Session(IdentityStore host,IdentityStore controller,uint uiThread,bool control)
+    {
+        var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint);
+        await c.Send(new("session",Control:control,Value:Wire.ProtocolVersion));
+        await NativeDialogs.Answer(uiThread,NativeDialogs.Yes,TimeSpan.FromSeconds(15));
+        var ready=await c.Read();
+        var reader=Task.Run(async()=>
+        {
+            try { while(true) { var p=await c.Read(); if(p.Frame is {} f) await c.Send(new("presented",Sequence:f.Sequence)); } }
+            catch(Exception e) when(e is IOException or ObjectDisposedException or InvalidOperationException) { }
+        });
+        return (c,ready,reader);
+    }
+    static async Task<Connection> Files(IdentityStore host,IdentityStore controller,string? token)
+    {
+        var f=await Connection.Connect("127.0.0.1",controller,host.Fingerprint);
+        await f.Send(new("files",Code:token)); return f;
+    }
+    public static async Task RunSessions(MainWindow window,IdentityStore host,IdentityStore controller,string receive,string root,Action<bool,string> check)
+    {
+        uint uiThread=await window.OnUi(NativeDialogs.CurrentThread);
+        string source=Path.Combine(root,"session-files"); Directory.CreateDirectory(source);
+        string sent=Path.Combine(source,"handover.zip"); byte[] data=RandomFile(sent,1024*1024);
+        using var limit=new CancellationTokenSource(TimeSpan.FromMinutes(2));
+        var (session,ready,reader)=await Session(host,controller,uiThread,true);
+        string token=ready.Code??"";
+        // A failed check must not leave the session open, or the fixture cannot shut down and hides the failure.
+        if(!(ready.Kind=="ready" && token.Length==64)) { session.Dispose(); await reader; }
+        check(ready.Kind=="ready" && token.Length==64,"control session offers a file grant");
+        using(var wrong=await Files(host,controller,new string('0',64))) check((await wrong.Read(limit.Token)).Kind=="denied","wrong token is denied");
+        var files=new FileClient(await Files(host,controller,token));
+        string saved=await files.Put(sent,null,limit.Token);
+        check(saved=="handover.zip" && File.ReadAllBytes(Path.Combine(receive,"handover.zip")).SequenceEqual(data),"files connection with the grant puts a file");
+        await session.Send(new("disconnect"));
+        bool closed=false;
+        try { await files.List("",limit.Token).WaitAsync(TimeSpan.FromSeconds(10)); } catch(Exception e) when(e is IOException or InvalidDataException) { closed=true; }
+        files.Dispose(); session.Dispose(); await reader;
+        using(var late=await Files(host,controller,token)) check(closed && (await late.Read(limit.Token)).Kind=="denied","files connection closes when the session ends");
+        await Task.Delay(500);
+        var (viewOnly,viewReady,viewReader)=await Session(host,controller,uiThread,false);
+        check(viewReady.Kind=="ready" && viewReady.Code==null,"view-only session offers none");
+        await viewOnly.Send(new("disconnect")); viewOnly.Dispose(); await viewReader;
+        await Task.Delay(500);
+    }
     static byte[] RandomFile(string path,int bytes) { var data=RandomNumberGenerator.GetBytes(bytes); File.WriteAllBytes(path,data); return data; }
     public static async Task Run(string root,Action<bool,string> check)
     {

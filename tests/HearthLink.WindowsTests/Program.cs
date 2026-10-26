@@ -93,7 +93,7 @@ try
         {
             using var window=new MainWindow(host) {ShowInTaskbar=false,Opacity=0,WindowState=FormWindowState.Minimized};
             HostServer? actual=null;
-            window.Shown+=(_,_)=> { actual=new HostServer(host,window,IPAddress.Loopback); actual.Start(); ready.SetResult((window,actual)); };
+            window.Shown+=(_,_)=> { actual=new HostServer(host,window,IPAddress.Loopback) {ReceiveFolder=Path.Combine(root,"host-receive")}; actual.Start(); ready.SetResult((window,actual)); };
             Application.Run(window); actual?.Dispose();
         }
         catch(Exception e) { ready.TrySetException(e); }
@@ -104,6 +104,7 @@ try
     {
         await UpdateUiChecks.Run(fixture.Window,host,Check);
         await FileChecks.Run(root,Check);
+        await FileChecks.RunSessions(fixture.Window,host,controller,Path.Combine(root,"host-receive"),root,Check);
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
             await c.Send(new("probe")); Check((await c.Read()).Kind=="online","actual HostServer accepts trusted status probe");
