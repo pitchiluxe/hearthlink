@@ -10,6 +10,7 @@ Both PCs connect outbound to the relay and authenticate with a signature from th
 |---|---|
 | Relay operator or attacker who controls the relay | End-to-end mutual TLS with pinned fingerprints inside the tunnel; the relay cannot decrypt, alter or impersonate. Worst case: it blocks or delays connections and sees metadata (which device IDs are online, when, how much data). |
 | Stranger on the internet | Must possess a paired private key. The relay refuses status and connect for devices not on the host's allowed list, so strangers cannot reach the host's TLS handshake outside an open pairing window. |
+| Files | Only during an approved control session: the host's `ready` carries a one-session grant token (`SessionFileGrant`) that a second pinned-TLS connection must present; the grant ends with the session. The host writes received files only into its `Downloads\HearthLink`, under names checked by `FilePolicy.ValidName`, through a temp file with length and SHA-256 checks. Get files reads what the host's signed-in Windows user can read. |
 | Guessing a pairing code | 8-digit secret sent only inside TLS, two-minute window, 5 tries per peer, 50 total, plus fingerprint approval on both PCs. The 4-digit lookup sent to the relay is not secret. |
 
 The relay stores only per-host allowed lists, presence and open pairing lookups: nothing about screens, input, the secret part of codes, or keys.

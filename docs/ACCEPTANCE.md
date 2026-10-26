@@ -59,6 +59,8 @@ Two PCs (Task 9):
 - [ ] A view-only session shows no file buttons.
 - [ ] Repeat one send and one get through the relay (PCs on different networks) and on a direct connection; record MB/s for each.
 
+One-PC measurement, 2026-10-25 (TECHNOBIZ-ASUS, both ends on this PC, 50 MiB each way during a live control session): local relay 16–17 MB/s send, 18–20 MB/s get, 4 of 4 runs; deployed relay 4–8 MB/s, but some runs ended when every relay connection was reset by the remote side at once, which the local relay never shows. Not yet seen between two PCs.
+
 ## Future release acceptance (not implemented; not passable yet)
 
 - [ ] Discovery displays real untrusted devices separately and grants no access.
