@@ -87,6 +87,21 @@ Check(!FilePolicy.ValidName("..\\secret.txt") && !FilePolicy.ValidName("../secre
 Check(!FilePolicy.ValidName("C:\\file.txt") && !FilePolicy.ValidName("CON.txt") && !FilePolicy.ValidName("name. "),"remote file names reject absolute paths and Windows reserved names");
 Check(FilePolicy.ValidName("Project report.pdf"),"ordinary file name accepted");
 {
+    string folder=Path.Combine(Path.GetTempPath(),"hl-names-"+Guid.NewGuid().ToString("N")); Directory.CreateDirectory(folder);
+    try
+    {
+        File.WriteAllText(Path.Combine(folder,"report.pdf"),"1"); File.WriteAllText(Path.Combine(folder,"report (2).pdf"),"2"); File.WriteAllText(Path.Combine(folder,"notes"),"3");
+        Check(FileNames.Unique(folder,"report.pdf")==Path.Combine(folder,"report (3).pdf") && FileNames.Unique(folder,"notes")==Path.Combine(folder,"notes (2)") && FileNames.Unique(folder,"new.txt")==Path.Combine(folder,"new.txt"),"unique name never overwrites");
+        bool refused=false; try { FileNames.Unique(folder,"..\\x.txt"); } catch(InvalidDataException) { refused=true; }
+        Check(refused,"unique name refuses unsafe names");
+    }
+    finally { Directory.Delete(folder,true); }
+    var when=new DateTimeOffset(2026,10,25,12,0,0,TimeSpan.Zero);
+    string json=FileNames.Encode([new("a.txt",false,12,when),new("Docs",true,0,when)]).Replace("]",",{\"Name\":\"..\\\\evil\",\"Folder\":false,\"Size\":1,\"Modified\":\"2026-10-25T12:00:00+00:00\"}]");
+    var entries=FileNames.Decode(json);
+    Check(entries.Count==2 && entries[0]==new FileEntry("a.txt",false,12,when) && entries[1].Folder,"listing round trips and drops unsafe names");
+}
+{
     byte[] nonce=Enumerable.Range(1,32).Select(i=>(byte)i).ToArray();
     byte[] expected=System.Text.Encoding.UTF8.GetBytes("hearthlink-relay-v1\n/v1/presence\n").Concat(nonce).ToArray();
     Check(RelayProtocol.SignatureInput(RelayProtocol.Presence,nonce).SequenceEqual(expected) && !RelayProtocol.SignatureInput(RelayProtocol.Status,nonce).SequenceEqual(expected),"relay signature input is domain separated");
