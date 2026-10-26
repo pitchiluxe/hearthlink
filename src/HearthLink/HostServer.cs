@@ -109,36 +109,38 @@ public sealed class HostServer : IDisposable
                         $"HearthLink • {mode} request",MessageBoxButtons.YesNo,MessageBoxIcon.Question,MessageBoxDefaultButton.Button2)==DialogResult.Yes);
                     if(!approved) { await connection.Send(new("denied",Text:"The person at the host declined."),lifetime.Token); return; }
                     using var stop=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
-                    active=stop;
-                    await ui.OnUi(()=> { ui.SessionStarted(identity.Config.Controllers.Entries[fingerprint],request.Control,Disconnect); identity.Audit(fingerprint,"connected"); return true; });
-                    var grant=new SessionFileGrant(fingerprint,request.Control,stop.Token);
-                    if(request.Control) files=grant;
-                    await connection.Send(new("ready",Value:Wire.ProtocolVersion,Code:request.Control?grant.Token:null,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray()),stop.Token);
                     int monitor=0,profile=0;
                     using var window=new FrameWindow();
                     var pressed=new HashSet<int>(); var buttons=new HashSet<int>();
-                    Task frames=Task.Run(async()=>
-                    {
-                        try
-                        {
-                            using var capture=new DesktopCapture();
-                            while(!stop.IsCancellationRequested)
-                            {
-                                long sequence=await window.AcquireAsync(stop.Token);
-                                if(!identity.Config.Controllers.Contains(fingerprint)) break;
-                                long cycle=Stopwatch.GetTimestamp(); int mode=Volatile.Read(ref profile);
-                                var frame=capture.Capture(Volatile.Read(ref monitor),sequence,mode,window.RoundTripMilliseconds);
-                                stop.Token.ThrowIfCancellationRequested();
-                                if(frame==null) window.Abandon(sequence);
-                                else { window.MarkSent(sequence); await connection.Send(new("frame",Frame:frame),stop.Token); }
-                                double remaining=1000d/DesktopCapture.Profile(mode).Fps-Stopwatch.GetElapsedTime(cycle).TotalMilliseconds;
-                                if(remaining>1) await Task.Delay(TimeSpan.FromMilliseconds(remaining),stop.Token);
-                            }
-                        }
-                        finally { stop.Cancel(); }
-                    });
+                    Task frames=Task.CompletedTask;
+                    // Session state is set only inside this try, so its finally always cancels the grant and clears it, even if "ready" cannot be sent.
                     try
                     {
+                        active=stop;
+                        var grant=new SessionFileGrant(fingerprint,request.Control,stop.Token);
+                        files=request.Control?grant:null;
+                        await ui.OnUi(()=> { ui.SessionStarted(identity.Config.Controllers.Entries[fingerprint],request.Control,Disconnect); identity.Audit(fingerprint,"connected"); return true; });
+                        await connection.Send(new("ready",Value:Wire.ProtocolVersion,Code:request.Control?grant.Token:null,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray()),stop.Token);
+                        frames=Task.Run(async()=>
+                        {
+                            try
+                            {
+                                using var capture=new DesktopCapture();
+                                while(!stop.IsCancellationRequested)
+                                {
+                                    long sequence=await window.AcquireAsync(stop.Token);
+                                    if(!identity.Config.Controllers.Contains(fingerprint)) break;
+                                    long cycle=Stopwatch.GetTimestamp(); int mode=Volatile.Read(ref profile);
+                                    var frame=capture.Capture(Volatile.Read(ref monitor),sequence,mode,window.RoundTripMilliseconds);
+                                    stop.Token.ThrowIfCancellationRequested();
+                                    if(frame==null) window.Abandon(sequence);
+                                    else { window.MarkSent(sequence); await connection.Send(new("frame",Frame:frame),stop.Token); }
+                                    double remaining=1000d/DesktopCapture.Profile(mode).Fps-Stopwatch.GetElapsedTime(cycle).TotalMilliseconds;
+                                    if(remaining>1) await Task.Delay(TimeSpan.FromMilliseconds(remaining),stop.Token);
+                                }
+                            }
+                            finally { stop.Cancel(); }
+                        });
                         while(!stop.IsCancellationRequested)
                         {
                             var p=await connection.Read(stop.Token);
