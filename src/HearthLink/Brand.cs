@@ -55,6 +55,11 @@ public sealed class Surface : Panel
     public Surface() { BackColor=Color.White; Padding=new(20); SetStyle(ControlStyles.OptimizedDoubleBuffer|ControlStyles.ResizeRedraw,true); }
     protected override void OnPaint(PaintEventArgs e) { base.OnPaint(e); using var pen=new Pen(Brand.Line); e.Graphics.DrawRectangle(pen,0,0,Width-1,Height-1); }
 }
+/// <summary>A details list that paints off screen, so repainting rows as the pointer moves over them does not blink.</summary>
+public sealed class DeviceList : ListView
+{
+    public DeviceList() { DoubleBuffered=true; }
+}
 public sealed class EmptyDevices : Control
 {
     public EmptyDevices() { BackColor=Color.White; ForeColor=Brand.Muted; SetStyle(ControlStyles.UserPaint|ControlStyles.AllPaintingInWmPaint|ControlStyles.OptimizedDoubleBuffer|ControlStyles.ResizeRedraw,true); }
