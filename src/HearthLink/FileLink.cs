@@ -196,7 +196,8 @@ public sealed class FileClient(Connection c,Func<string,long>? freeSpace=null) :
     {
         await c.Send(new("get",Text:remotePath),token);
         var reply=Expect(await c.Read(token),"file");
-        if(!FilePolicy.ValidName(reply.Name??"") || reply.Sequence<0) throw new InvalidDataException("The other PC sent an invalid file name or size.");
+        // Same-named files are replaced, so only the name that was asked for may be written; the other PC cannot pick another.
+        if(!FilePolicy.ValidName(reply.Name??"") || !string.Equals(reply.Name,Path.GetFileName(remotePath),StringComparison.OrdinalIgnoreCase) || reply.Sequence<0) throw new InvalidDataException("The other PC sent an invalid file name or size.");
         Directory.CreateDirectory(localFolder);
         long free=(freeSpace??FileLink.FreeSpace)(localFolder);
         if(reply.Sequence>free)
