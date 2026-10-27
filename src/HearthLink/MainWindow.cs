@@ -56,7 +56,7 @@ public sealed class MainWindow : Form
         sidebar.Controls.Add(new Label {Text="A little closer to home.",Location=new(22,138),Size=new(144,48),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
         sidebar.Controls.Add(new Label {Text="Your computers",Location=new(0,218),Size=new(180,46),Padding=new(22,12,0,0),BackColor=Color.FromArgb(36,57,90),ForeColor=Color.White,Font=new("Segoe UI",10,FontStyle.Bold)});
         sidebar.Controls.Add(new Label {Text="Private connections\nAny network",Location=new(22,292),Size=new(143,70),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
-        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.0\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
+        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.1\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
         root.Controls.Add(sidebar,0,0);
         var content=new TableLayoutPanel {Dock=DockStyle.Fill,RowCount=3,ColumnCount=1,Padding=new(28,24,28,18),Margin=Padding.Empty};
         content.RowStyles.Add(new(SizeType.Absolute,86)); content.RowStyles.Add(new(SizeType.Percent,100)); content.RowStyles.Add(new(SizeType.Absolute,36)); root.Controls.Add(content,1,0);

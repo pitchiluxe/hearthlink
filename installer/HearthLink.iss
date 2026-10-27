@@ -1,4 +1,4 @@
-#define AppVersion "0.4.0"
+#define AppVersion "0.4.1"
 [Setup]
 AppId={{8910C137-DC6A-4A87-BE94-601B77D80391}
 AppName=HearthLink
@@ -6,7 +6,7 @@ AppVersion={#AppVersion}
 DefaultDirName={autopf}\HearthLink
 DefaultGroupName=HearthLink
 OutputDir=..\artifacts
-OutputBaseFilename=HearthLink-0.4.0-win-x64-setup
+OutputBaseFilename=HearthLink-0.4.1-win-x64-setup
 SetupIconFile=..\assets\HearthLink.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
