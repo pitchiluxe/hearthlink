@@ -91,11 +91,11 @@ static class FileChecks
         var strip=await window.OnUi(()=>new TransferStrip(Open));
         await (await window.OnUi(()=>strip.Send([tree,Path.Combine(near,"loose.txt")],far)));
         await (await window.OnUi(()=>strip.Send([tree],far)));
-        check(Same(tree,Path.Combine(far,"Trip")) && Same(tree,Path.Combine(far,"Trip (2)")) && File.ReadAllText(Path.Combine(far,"loose.txt"))=="x","copy to the remote pane recreates folder trees in its folder");
+        check(Same(tree,Path.Combine(far,"Trip")) && !Directory.Exists(Path.Combine(far,"Trip (2)")) && File.ReadAllText(Path.Combine(far,"loose.txt"))=="x","copy to the remote pane recreates folder trees in its folder and a second copy replaces the first");
         string back=Path.Combine(root,"strip-back"); Directory.CreateDirectory(back);
         await (await window.OnUi(()=>strip.Get([(Path.Combine(far,"Trip"),true,0L),(Path.Combine(far,"loose.txt"),false,1L)],back)));
         await (await window.OnUi(()=>strip.Get([(Path.Combine(far,"Trip"),true,0L)],back)));
-        check(Same(tree,Path.Combine(back,"Trip")) && Same(tree,Path.Combine(back,"Trip (2)")) && File.ReadAllText(Path.Combine(back,"loose.txt"))=="x","copy to the local pane recreates remote folder trees in its folder");
+        check(Same(tree,Path.Combine(back,"Trip")) && !Directory.Exists(Path.Combine(back,"Trip (2)")) && File.ReadAllText(Path.Combine(back,"loose.txt"))=="x","copy to the local pane recreates remote folder trees in its folder and a second copy replaces the first");
         await window.OnUi(()=> { strip.Dispose(); return true; });
     }
     /// <summary>The remote pane's connection dropped while idle (the relay closes silent WebSockets): the next folder still opens.</summary>
@@ -184,18 +184,19 @@ static class FileChecks
                 string sent=Path.Combine(source,"report.pdf"); byte[] data=RandomFile(sent,3*1024*1024);
                 long reported=0; string saved=await client.Put(sent,new Progress(v=>reported=v),lifetime.Token);
                 check(saved=="report.pdf" && File.ReadAllBytes(Path.Combine(receive,"report.pdf")).SequenceEqual(data) && reported==data.Length,"put saves into the receive folder");
+                data=RandomFile(sent,1024*1024+7);
                 string again=await client.Put(sent,null,lifetime.Token);
-                check(again=="report (2).pdf" && File.Exists(Path.Combine(receive,"report (2).pdf")) && File.ReadAllBytes(Path.Combine(receive,"report.pdf")).SequenceEqual(data),"put never overwrites");
+                check(again=="report.pdf" && !File.Exists(Path.Combine(receive,"report (2).pdf")) && File.ReadAllBytes(Path.Combine(receive,"report.pdf")).SequenceEqual(data),"put replaces a file of the same name");
 
                 string top=await client.Folder("Album",lifetime.Token), duplicate=await client.Folder("Album",lifetime.Token);
-                check(top=="Album" && duplicate=="Album (2)" && Directory.Exists(Path.Combine(receive,"Album (2)")),"a sent folder never merges into an existing one");
+                check(top=="Album" && duplicate=="Album" && !Directory.Exists(Path.Combine(receive,"Album (2)")),"a sent folder merges into an existing one");
                 string nested=await client.Folder("Album\\2026\\Empty",lifetime.Token);
                 string inFolder=await client.Put(sent,null,lifetime.Token,"Album\\2026\\report.pdf");
                 check(nested=="Album\\2026\\Empty" && Directory.Exists(Path.Combine(receive,"Album","2026","Empty")) && inFolder=="Album\\2026\\report.pdf" && File.ReadAllBytes(Path.Combine(receive,"Album","2026","report.pdf")).SequenceEqual(data),"files and empty subfolders keep their place inside a sent folder");
                 string chosen=Path.Combine(root,"chosen-folder"); Directory.CreateDirectory(chosen);
                 string intoChosen=await client.Put(sent,null,lifetime.Token,null,chosen), intoChosenAgain=await client.Put(sent,null,lifetime.Token,null,chosen);
                 string chosenAlbum=await client.Folder("Album",lifetime.Token,chosen);
-                check(intoChosen=="report.pdf" && intoChosenAgain=="report (2).pdf" && File.ReadAllBytes(Path.Combine(chosen,"report.pdf")).SequenceEqual(data) && chosenAlbum=="Album" && Directory.Exists(Path.Combine(chosen,"Album")),"put and folder go into a chosen host folder without overwriting");
+                check(intoChosen=="report.pdf" && intoChosenAgain=="report.pdf" && !File.Exists(Path.Combine(chosen,"report (2).pdf")) && File.ReadAllBytes(Path.Combine(chosen,"report.pdf")).SequenceEqual(data) && chosenAlbum=="Album" && Directory.Exists(Path.Combine(chosen,"Album")),"put and folder go into a chosen host folder, replacing same-named files");
                 bool relativeBase=false, missingBase=false;
                 try { await client.Put(sent,null,lifetime.Token,null,"chosen-folder"); } catch(InvalidOperationException) { relativeBase=true; }
                 try { await client.Put(sent,null,lifetime.Token,null,Path.Combine(root,"no-such-folder")); } catch(InvalidOperationException) { missingBase=true; }
@@ -232,7 +233,7 @@ static class FileChecks
                 await c.Send(new("put",Name:"..\\escape.txt",Sequence:4));
                 var serving=new FileHost(receive).Serve(h,lifetime.Token);
                 var reply=await c.Read();
-                check(reply.Kind=="denied" && !File.Exists(Path.Combine(root,"escape.txt")) && Directory.GetFiles(receive).Length==2,"put rejects unsafe names");
+                check(reply.Kind=="denied" && !File.Exists(Path.Combine(root,"escape.txt")) && Directory.GetFiles(receive).Length==1,"put rejects unsafe names");
                 await c.Send(new("put",Name:"Album\\..\\..\\climb.txt",Sequence:4)); var climb=await c.Read();
                 await c.Send(new("folder",Name:"..")); var up=await c.Read();
                 await c.Send(new("folder",Name:"C:\\Windows")); var absolute=await c.Read();

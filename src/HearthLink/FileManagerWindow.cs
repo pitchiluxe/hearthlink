@@ -257,7 +257,7 @@ public sealed class FileManagerWindow : Form
         FormClosed+=(_,_)=> { transfers.Cancel(); lifetime.Cancel(); remoteFiles.Dispose(); lifetime.Dispose(); };
     }
     async Task ReloadBoth() { await local.ReloadAll(); await remote.ReloadAll(); }
-    /// <summary>Copies the selection of <paramref name="from"/> into the folder open in the other pane, never overwriting.</summary>
+    /// <summary>Copies the selection of <paramref name="from"/> into the folder open in the other pane, replacing same-named files.</summary>
     async Task Copy(FilePane from)
     {
         var picks=from.Selected;

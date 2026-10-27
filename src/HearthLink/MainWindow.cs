@@ -348,7 +348,12 @@ public sealed class MainWindow : Form
     {
         if(!identity.Config.Controller) throw new InvalidOperationException("Enable controller first.");
         if(hosts.SelectedIndices.Count==0) throw new InvalidOperationException("Select a trusted host first.");
-        var host=identity.Config.Hosts[hosts.SelectedIndices[0]];
+        await ConnectTo(identity.Config.Hosts[hosts.SelectedIndices[0]].Fingerprint,control.Checked);
+    }
+    /// <summary>Opens a viewer on the paired host <paramref name="fingerprint"/>; the viewer's Reconnect button comes back here.</summary>
+    async Task ConnectTo(string fingerprint,bool allowControl)
+    {
+        var host=identity.Config.Hosts.Find(p=>p.Fingerprint==fingerprint) ?? throw new InvalidOperationException("That computer is no longer paired.");
         string name=PeerName.Clean(host.Name);
         connectionProgress.Text="Connecting to "+name+"…";
         Connection? connection=null;
@@ -357,11 +362,11 @@ public sealed class MainWindow : Form
             (connection,bool direct)=await Reach(host,name);
             string route=direct?"direct":"relay";
             connectionProgress.Text="Waiting for session approval on "+name+" • "+route;
-            await connection.Send(new("session",Control:control.Checked,Value:Wire.ProtocolVersion));
+            await connection.Send(new("session",Control:allowControl,Value:Wire.ProtocolVersion));
             using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
             var reply=await connection.Read(timeout.Token);
             if(reply.Kind!="ready") throw new InvalidOperationException(reply.Text??"Host rejected the session.");
-            if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved.");
+            if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to the latest version. Existing pairing is preserved.");
             connectionProgress.Text="Connected to "+name;
             identity.Audit(host.Fingerprint,"outbound-connected");
             if(identity.UpgradeTrust(host.Fingerprint,null)) TrustChanged();
@@ -372,7 +377,12 @@ public sealed class MainWindow : Form
                 var files=direct?await Connection.Connect(host.Address,identity,host.Fingerprint):await RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,token);
                 try { await files.Send(new("files",Code:fileGrant),token); return files; } catch { files.Dispose(); throw; }
             };
-            new Viewer(connection,name,control.Checked,reply.Monitors??["Display 1"],route,openFiles).Show(this); connection=null;
+            Func<Task> reconnect=async()=>
+            {
+                try { await ConnectTo(fingerprint,allowControl); }
+                catch(Exception e) { connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning); }
+            };
+            new Viewer(connection,name,allowControl,reply.Monitors??["Display 1"],route,openFiles,reconnect).Show(this); connection=null;
         }
         finally { connection?.Dispose(); }
     }

@@ -94,7 +94,7 @@ public sealed class TransferStrip : Panel
     public Task Send(IReadOnlyList<string> paths,string? remoteFolder=null,IReadOnlyCollection<string>? skip=null)=>Send(Expand(paths,skip),remoteFolder);
     public Task Send(IReadOnlyList<Outgoing> items,string? remoteFolder=null)
     {
-        // The host may rename a top folder ("Album (2)"); later items of that folder go under the name it chose.
+        // Later items of a top folder go under the name the host reports for it.
         var placed=new Dictionary<int,string>();
         string Remote(Outgoing o)=>o.Root<0?o.Relative:o.Relative.Length==0?placed[o.Root]:placed[o.Root]+"\\"+o.Relative;
         string where=remoteFolder??"Downloads\\HearthLink";
@@ -114,7 +114,7 @@ public sealed class TransferStrip : Panel
         return Run("Getting",async(client,token)=>(await ExpandRemote(client,picks,token,skip)).Select(i=>new Job(i.Remote==null?"folder "+(i.Relative.Length==0?i.RootName:i.RootName+"\\"+i.Relative):Path.GetFileName(i.Remote),i.Relative,i.Size,i.Remote!=null,async(client,report,token)=>
         {
             Directory.CreateDirectory(target);
-            if(i.Remote==null && i.Relative.Length==0) { placed[i.Root]=FileNames.Unique(target,i.RootName); Directory.CreateDirectory(placed[i.Root]); }
+            if(i.Remote==null && i.Relative.Length==0) { placed[i.Root]=Path.Combine(target,i.RootName); Directory.CreateDirectory(placed[i.Root]); }
             else if(i.Remote==null) Directory.CreateDirectory(Local(i));
             else await client.Get(i.Remote,i.Root<0?target:Path.GetDirectoryName(Local(i))!,report,token);
         })).ToArray(),files=>$"Saved {Files(files)} to {target}",target);

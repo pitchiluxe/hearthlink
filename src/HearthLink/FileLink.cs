@@ -3,13 +3,15 @@ using System.Security.Cryptography;
 
 namespace HearthLink;
 /// <summary>
-/// Moves one file over a files connection in <see cref="FilePolicy.ChunkBytes"/> chunks. The sender pauses after every
-/// <see cref="Window"/> bytes until the receiver acknowledges, so neither the relay nor a slow peer buffers a whole file.
-/// The receiver acknowledges every window and once at the end; the sender drains those before "file-end".
+/// Moves one file over a files connection in <see cref="FilePolicy.ChunkBytes"/> chunks. At most <see cref="Window"/>
+/// unacknowledged bytes are in flight, so neither the relay nor a slow peer buffers a whole file, and the video and
+/// input of the session sharing the same upload never wait behind more than about a second of file data.
+/// The receiver acknowledges every <see cref="AckEvery"/> bytes and once at the end, so the sender keeps moving
+/// instead of draining the window; it reads those acknowledgements before "file-end".
 /// </summary>
 public static class FileLink
 {
-    public const int Window=4*1024*1024;
+    public const int Window=1024*1024, AckEvery=Window/4;
     /// <summary>Free bytes on the drive holding <paramref name="folder"/>; unknown (network paths) counts as unlimited, and the write itself still fails cleanly.</summary>
     public static long FreeSpace(string folder)
     {
@@ -37,10 +39,10 @@ public static class FileLink
         if(reply.Kind!="file-ack") throw new InvalidDataException(reply.Kind=="denied"?reply.Text??"The other PC stopped the transfer.":"Unexpected reply during a file transfer.");
         return reply.Sequence;
     }
-    /// <summary>Receives into <paramref name="destination"/> through a temp file; nothing appears there unless length and SHA-256 match.</summary>
+    /// <summary>Receives into <paramref name="destination"/> through a temp file, replacing a file already there; nothing changes unless length and SHA-256 match.</summary>
     public static async Task<string> Receive(Connection c,string destination,long length,IProgress<long>? progress,CancellationToken token)
     {
-        await using var receiver=new FileReceiver(destination,length,Guid.NewGuid(),false);
+        await using var receiver=new FileReceiver(destination,length,Guid.NewGuid(),true);
         Guid? id=null; long acked=0;
         while(receiver.Received<length)
         {
@@ -48,7 +50,7 @@ public static class FileLink
             if(packet.Chunk is not {} chunk) throw new InvalidDataException("Unexpected message during a file transfer.");
             if((id??=chunk.Id)!=chunk.Id) throw new InvalidDataException("File chunks from two transfers were mixed.");
             await receiver.AppendAsync(chunk.Offset,chunk.Bytes,token); progress?.Report(receiver.Received);
-            if(receiver.Received-acked>=Window || receiver.Received==length) { acked=receiver.Received; await c.Send(new("file-ack",Sequence:acked),token); }
+            if(receiver.Received-acked>=AckEvery || receiver.Received==length) { acked=receiver.Received; await c.Send(new("file-ack",Sequence:acked),token); }
         }
         var end=await c.Read(token);
         if(end.Kind!="file-end" || end.Code==null) throw new InvalidDataException("File transfer ended without a digest.");
@@ -142,13 +144,13 @@ public sealed class FileHost(string receiveFolder,Func<string,long>? freeSpace=n
         string full=Path.GetFullPath(Path.Combine([root,..segments]));
         return full.StartsWith(root.TrimEnd('\\')+"\\",StringComparison.OrdinalIgnoreCase) ? full : null;
     }
-    /// <summary>Creates a folder for a sent folder tree. A single-segment (top) folder gets a unique name so a second copy never merges into the first.</summary>
+    /// <summary>Creates a folder for a sent folder tree. An existing folder is reused, so a second copy merges into it and replaces same-named files.</summary>
     async Task Folder(Connection c,Packet request,CancellationToken token)
     {
         string relative=request.Name??"";
         if(Base(request) is not {} root) { await c.Send(Denied("That folder no longer exists on this PC."),token); return; }
         if(Inside(root,relative) is not {} full) { await c.Send(Denied("That folder name is not allowed."),token); return; }
-        if(!relative.Contains('\\')) full=FileNames.Unique(root,relative);
+        if(File.Exists(full)) { await c.Send(Denied("A file with that folder's name is in the way on the other PC."),token); return; }
         Directory.CreateDirectory(full);
         await c.Send(new("folder-ok",Name:Path.GetRelativePath(root,full)),token);
     }
@@ -161,11 +163,10 @@ public sealed class FileHost(string receiveFolder,Func<string,long>? freeSpace=n
         if(length<0) { await c.Send(Denied("Invalid file size."),token); return; }
         long free=(freeSpace??FileLink.FreeSpace)(root);
         if(length>free) { await c.Send(Denied($"Not enough free space on the other PC: needs {FilePane.SizeText(length)}, has {FilePane.SizeText(free)}."),token); return; }
-        string folder=Path.GetDirectoryName(target)!;
-        Directory.CreateDirectory(folder);
-        string destination=FileNames.Unique(folder,Path.GetFileName(target));
+        if(Directory.Exists(target)) { await c.Send(Denied("A folder with that file's name is in the way on the other PC."),token); return; }
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         await c.Send(new("go"),token);
-        string saved=await FileLink.Receive(c,destination,length,null,token);
+        string saved=await FileLink.Receive(c,target,length,null,token);
         await c.Send(new("saved",Name:Path.GetRelativePath(root,saved)),token);
     }
 }
@@ -190,7 +191,7 @@ public sealed class FileClient(Connection c,Func<string,long>? freeSpace=null) :
         }
         return (reply.Text??"",entries,reply.Code==null?[]:FileNames.DecodeDrives(reply.Code));
     }
-    /// <summary>Copies a host file into <paramref name="localFolder"/> under a name that overwrites nothing; returns the saved path.</summary>
+    /// <summary>Copies a host file into <paramref name="localFolder"/>, replacing a file of the same name; returns the saved path.</summary>
     public async Task<string> Get(string remotePath,string localFolder,IProgress<long>? progress,CancellationToken token)
     {
         await c.Send(new("get",Text:remotePath),token);
@@ -204,9 +205,11 @@ public sealed class FileClient(Connection c,Func<string,long>? freeSpace=null) :
             c.Dispose();
             throw new InvalidOperationException($"Not enough free space on this PC: needs {FilePane.SizeText(reply.Sequence)}, has {FilePane.SizeText(free)}.");
         }
-        return await FileLink.Receive(c,FileNames.Unique(localFolder,reply.Name!),reply.Sequence,progress,token);
+        string destination=Path.Combine(localFolder,reply.Name!);
+        if(Directory.Exists(destination)) { c.Dispose(); throw new InvalidOperationException($"A folder named {reply.Name} is in the way on this PC."); }
+        return await FileLink.Receive(c,destination,reply.Sequence,progress,token);
     }
-    /// <summary>Creates a folder in the host's receive folder; a top-level name comes back unique ("Album (2)"). Returns the folder's path relative to the receive folder.</summary>
+    /// <summary>Creates a folder in the host's receive folder; an existing one is reused. Returns the folder's path relative to the receive folder.</summary>
     public async Task<string> Folder(string relative,CancellationToken token,string? remoteFolder=null)
     {
         await c.Send(new("folder",Name:relative,Text:remoteFolder),token);
