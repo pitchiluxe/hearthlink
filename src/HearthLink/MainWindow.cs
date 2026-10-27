@@ -56,7 +56,7 @@ public sealed class MainWindow : Form
         sidebar.Controls.Add(new Label {Text="A little closer to home.",Location=new(22,138),Size=new(144,48),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
         sidebar.Controls.Add(new Label {Text="Your computers",Location=new(0,218),Size=new(180,46),Padding=new(22,12,0,0),BackColor=Color.FromArgb(36,57,90),ForeColor=Color.White,Font=new("Segoe UI",10,FontStyle.Bold)});
         sidebar.Controls.Add(new Label {Text="Private connections\nAny network",Location=new(22,292),Size=new(143,70),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
-        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.1\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
+        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.2\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
         root.Controls.Add(sidebar,0,0);
         var content=new TableLayoutPanel {Dock=DockStyle.Fill,RowCount=3,ColumnCount=1,Padding=new(28,24,28,18),Margin=Padding.Empty};
         content.RowStyles.Add(new(SizeType.Absolute,86)); content.RowStyles.Add(new(SizeType.Percent,100)); content.RowStyles.Add(new(SizeType.Absolute,36)); root.Controls.Add(content,1,0);
@@ -150,10 +150,48 @@ public sealed class MainWindow : Form
     {
         hosts.OwnerDraw=true;
         hosts.DrawColumnHeader+=(_,e)=> { using var brush=new SolidBrush(Color.FromArgb(246,248,252)); e.Graphics.FillRectangle(brush,e.Bounds); TextRenderer.DrawText(e.Graphics,e.Header?.Text??"",new Font("Segoe UI",9),new Rectangle(e.Bounds.X+8,e.Bounds.Y,e.Bounds.Width-8,e.Bounds.Height),Brand.Muted,TextFormatFlags.VerticalCenter); };
-        hosts.DrawItem+=(_,e)=> { if(e.Item.Selected) { using var b=new SolidBrush(Color.FromArgb(235,242,255)); e.Graphics.FillRectangle(b,e.Bounds); } };
-        hosts.DrawSubItem+=(_,e)=> { if(e.Item==null || e.SubItem==null) return; Color color=e.ColumnIndex==2 && e.SubItem.Text.StartsWith("Online")?Color.FromArgb(14,116,88):e.ColumnIndex==0?Brand.Ink:Brand.Muted; TextRenderer.DrawText(e.Graphics,e.SubItem.Text,Font,new Rectangle(e.Bounds.X+8,e.Bounds.Y,e.Bounds.Width-8,e.Bounds.Height),color,TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis); };
-        hosts.Resize+=(_,_)=> { if(hosts.Width<100) return; int total=Math.Max(400,hosts.ClientSize.Width-6); int[] weights=[27,25,22,26]; for(int i=0;i<4;i++) hosts.Columns[i].Width=total*weights[i]/100; };
+        // Taller rows are easier to read and click; a ListView takes its row height from its image list.
+        hosts.SmallImageList=new ImageList {ImageSize=new(1,30)};
+        // Each row is washed in its status color with a solid stripe on the left: green online, red offline or refused, grey before the first check.
+        hosts.DrawItem+=(_,e)=>
+        {
+            var tint=Tint(e.Item.SubItems[2].Text);
+            using(var wash=new SolidBrush(e.Item.Selected?tint.Selected:tint.Wash)) e.Graphics.FillRectangle(wash,e.Bounds);
+            using(var stripe=new SolidBrush(tint.Stripe)) e.Graphics.FillRectangle(stripe,e.Bounds.X,e.Bounds.Y,6,e.Bounds.Height);
+            using(var line=new Pen(Color.White)) e.Graphics.DrawLine(line,e.Bounds.Left,e.Bounds.Bottom-1,e.Bounds.Right,e.Bounds.Bottom-1);
+            if(e.Item.Selected) { using var outline=new Pen(Brand.Blue); e.Graphics.DrawRectangle(outline,e.Bounds.X+6,e.Bounds.Y,e.Bounds.Width-7,e.Bounds.Height-2); }
+        };
+        hosts.DrawSubItem+=(_,e)=>
+        {
+            if(e.Item==null || e.SubItem==null) return;
+            var tint=Tint(e.Item.SubItems[2].Text);
+            Color color=e.ColumnIndex==2?tint.Text:e.ColumnIndex==0?Brand.Ink:Brand.Muted;
+            string text=e.ColumnIndex==2?"●  "+e.SubItem.Text:e.SubItem.Text;
+            int left=e.ColumnIndex==0?16:8;
+            using var font=e.ColumnIndex is 0 or 2?new Font(Font,FontStyle.Bold):null;
+            TextRenderer.DrawText(e.Graphics,text,font??Font,new Rectangle(e.Bounds.X+left,e.Bounds.Y,e.Bounds.Width-left,e.Bounds.Height),color,TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
+        };
+        hosts.Resize+=(_,_)=>FitHostColumns();
     }
+    /// <summary>Spreads the columns over the visible width, leaving room for the vertical scrollbar so no sideways scrollbar appears.</summary>
+    void FitHostColumns()
+    {
+        if(hosts.Width<100) return;
+        int total=Math.Max(400,hosts.ClientSize.Width-SystemInformation.VerticalScrollBarWidth-2); int[] weights=[30,20,25,25];
+        hosts.BeginUpdate(); for(int i=0;i<4;i++) hosts.Columns[i].Width=total*weights[i]/100; hosts.EndUpdate();
+    }
+    /// <summary>"Today 10:21 AM", "Yesterday 9:05 PM" or "Oct 24 9:05 PM": short enough for the Last seen column.</summary>
+    static string Seen(DateTimeOffset? seen)
+    {
+        if(seen is not {} value) return "Never";
+        var local=value.ToLocalTime(); var days=(DateTime.Today-local.Date).Days;
+        string time=local.ToString("t");
+        return days==0?"Today "+time:days==1?"Yesterday "+time:local.Year==DateTime.Today.Year?local.ToString("MMM d")+" "+time:local.ToString("d");
+    }
+    static (Color Stripe,Color Wash,Color Selected,Color Text) Tint(string status)=>
+        status.StartsWith("Online",StringComparison.Ordinal) ? (Color.FromArgb(22,163,74),Color.FromArgb(236,249,241),Color.FromArgb(209,240,221),Color.FromArgb(21,128,61)) :
+        status=="Not checked" ? (Color.FromArgb(203,213,225),Color.White,Color.FromArgb(235,242,255),Brand.Muted) :
+        (Color.FromArgb(220,38,38),Color.FromArgb(254,240,240),Color.FromArgb(252,218,218),Color.FromArgb(185,28,28));
     Button AsyncAction(string label,Func<Task> action)
     {
         var b=Brand.Style(new Button {Text=label,AutoSize=true});
@@ -295,9 +333,10 @@ public sealed class MainWindow : Form
     void PopulateControllers() { controllers.Items.Clear(); foreach(var entry in identity.Config.Controllers.Entries) controllers.Items.Add(new ControllerItem(PeerName.Clean(entry.Value),entry.Key)); emptyControllers.Visible=controllers.Items.Count==0; controllers.Visible=controllers.Items.Count>0; }
     void PopulateHosts()
     {
-        hosts.Items.Clear(); foreach(var host in identity.Config.Hosts) hosts.Items.Add(new ListViewItem([PeerName.Clean(host.Name),host.Address.Length>0?host.Address:"Relay only","Not checked",host.LastSeen?.ToLocalTime().ToString("g")??"Never"]));
+        hosts.Items.Clear(); foreach(var host in identity.Config.Hosts) hosts.Items.Add(new ListViewItem([PeerName.Clean(host.Name),host.Address.Length>0?host.Address:"Relay only","Not checked",Seen(host.LastSeen)]));
         emptyDevices.Visible=hosts.Items.Count==0; hosts.Visible=hosts.Items.Count>0;
         deviceCount.Text=hosts.Items.Count==1?"1 approved computer":$"{hosts.Items.Count} approved computers";
+        FitHostColumns();
     }
     async Task PairHost()
     {
@@ -440,9 +479,12 @@ public sealed class MainWindow : Form
                 int index=identity.Config.Hosts.FindIndex(p=>p.Fingerprint==host.Fingerprint && p.Address==host.Address);
                 if(index<0) continue;
                 identity.Config.Hosts[index]=host with {LastSeen=seen};
-                if(index<hosts.Items.Count) { hosts.Items[index].SubItems[2].Text=state; hosts.Items[index].SubItems[3].Text=seen?.ToLocalTime().ToString("g")??"Never"; }
+                if(index<hosts.Items.Count) { hosts.Items[index].SubItems[2].Text=state; hosts.Items[index].SubItems[3].Text=Seen(seen); }
             }
             identity.Save();
+            hosts.Invalidate();
+            int online=hosts.Items.Cast<ListViewItem>().Count(i=>i.SubItems[2].Text.StartsWith("Online",StringComparison.Ordinal));
+            deviceCount.Text=$"{(hosts.Items.Count==1?"1 approved computer":$"{hosts.Items.Count} approved computers")} • {online} online • {hosts.Items.Count-online} offline";
             // Repopulating hosts here would wipe the statuses just shown.
             if(identity.Config.Controllers.Entries.Count!=trusted) { PopulateControllers(); _=presence?.PublishAllowed(); }
         }
