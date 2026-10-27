@@ -7,6 +7,11 @@ namespace HearthLink.Core;
 public sealed class FrameWindow : IDisposable
 {
     public const int Depth=3;
+    /// <summary>
+    /// How long the host waits for an acknowledgement before ending the session. A file copy on a slow upload can hold
+    /// acknowledgements back for several seconds, so this only catches a viewer that has really gone away.
+    /// </summary>
+    public static readonly TimeSpan StallLimit=TimeSpan.FromSeconds(45);
     readonly SemaphoreSlim turn=new(Depth,Depth);
     readonly object sync=new();
     // Sequence → send timestamp, 0 while the frame is acquired but not yet sent.
@@ -16,7 +21,7 @@ public sealed class FrameWindow : IDisposable
     public int RoundTripMilliseconds { get { lock(sync) return roundTrip; } }
     public async Task<long> AcquireAsync(CancellationToken token=default)
     {
-        if(!await turn.WaitAsync(TimeSpan.FromSeconds(8),token).ConfigureAwait(false)) throw new TimeoutException("Viewer stopped presenting frames.");
+        if(!await turn.WaitAsync(StallLimit,token).ConfigureAwait(false)) throw new TimeoutException("Viewer stopped presenting frames.");
         lock(sync) { open[++next]=0; return next; }
     }
     public void MarkSent(long sequence) { lock(sync) { if(!open.ContainsKey(sequence)) throw new InvalidOperationException("Unexpected frame sequence."); open[sequence]=Stopwatch.GetTimestamp(); } }

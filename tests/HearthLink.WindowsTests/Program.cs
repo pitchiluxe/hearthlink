@@ -181,8 +181,8 @@ try
         }
         using(var c=await Connection.Connect("127.0.0.1",controller,host.Fingerprint))
         {
-            await c.Send(new("session",Control:true,Value:2));
-            var reply=await c.Read(); Check(reply.Kind=="denied" && (reply.Text??"").Contains("0.3.0"),"protocol 2 session gets update message");
+            await c.Send(new("session",Control:true,Value:Wire.ProtocolVersion-1));
+            var reply=await c.Read(); Check(reply.Kind=="denied" && (reply.Text??"").Contains("Update HearthLink on BOTH PCs"),"an older protocol session gets update message");
         }
         using(var c=await Connection.Connect("127.0.0.1",stranger,host.Fingerprint))
         {

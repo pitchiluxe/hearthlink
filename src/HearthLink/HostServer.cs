@@ -101,7 +101,7 @@ public sealed class HostServer : IDisposable
                 }
                 if(request.Kind=="probe") { await connection.Send(new("online",Name:identity.Config.Name),initial.Token); return; }
                 if(request.Kind!="session") return;
-                if(request.Value!=Wire.ProtocolVersion) {await connection.Send(new("denied",Text:"Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved."),initial.Token); return;}
+                if(request.Value!=Wire.ProtocolVersion) {await connection.Send(new("denied",Text:"Update HearthLink on BOTH PCs to the latest version. Existing pairing is preserved."),initial.Token); return;}
                 if(!session.Wait(0)) { await connection.Send(new("denied",Text:"Host already has an active session."),initial.Token); return; }
                 try
                 {
@@ -151,7 +151,10 @@ public sealed class HostServer : IDisposable
                                     long sequence=await window.AcquireAsync(stop.Token);
                                     if(!identity.Config.Controllers.Contains(fingerprint)) break;
                                     long cycle=Stopwatch.GetTimestamp(); int mode=Volatile.Read(ref profile);
-                                    var frame=capture.Capture(Volatile.Read(ref monitor),sequence,mode,window.RoundTripMilliseconds);
+                                    VideoFrame? frame;
+                                    // A UAC prompt or the lock screen blocks capture for a while; keep the session and try again.
+                                    try { frame=capture.Capture(Volatile.Read(ref monitor),sequence,mode,window.RoundTripMilliseconds); }
+                                    catch(System.ComponentModel.Win32Exception) { window.Abandon(sequence); await Task.Delay(500,stop.Token); continue; }
                                     stop.Token.ThrowIfCancellationRequested();
                                     if(frame==null) window.Abandon(sequence);
                                     else { window.MarkSent(sequence); await connection.Send(new("frame",Frame:frame),stop.Token); }
@@ -173,13 +176,14 @@ public sealed class HostServer : IDisposable
                             if(!request.Control) continue;
                             if(p.Kind=="release")
                             {
-                                foreach(int key in pressed) Desktop.Input(new("key",Value:key),monitor);
-                                foreach(int button in buttons) Desktop.Input(new("button",Value:button),monitor);
+                                foreach(int key in pressed) { try { Desktop.Input(new("key",Value:key),monitor); } catch(InvalidOperationException) { } }
+                                foreach(int button in buttons) { try { Desktop.Input(new("button",Value:button),monitor); } catch(InvalidOperationException) { } }
                                 pressed.Clear(); buttons.Clear(); continue;
                             }
                             if(p.Kind=="key") { if(p.Down) pressed.Add(p.Value); else pressed.Remove(p.Value); }
                             if(p.Kind=="button") { if(p.Down) buttons.Add(p.Value); else buttons.Remove(p.Value); }
-                            Desktop.Input(p,Volatile.Read(ref monitor));
+                            // Windows refuses input aimed at elevated windows or the secure desktop; drop that event, the session goes on.
+                            try { Desktop.Input(p,Volatile.Read(ref monitor)); } catch(InvalidOperationException) { }
                         }
                     }
                     finally

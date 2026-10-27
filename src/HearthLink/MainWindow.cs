@@ -56,7 +56,7 @@ public sealed class MainWindow : Form
         sidebar.Controls.Add(new Label {Text="A little closer to home.",Location=new(22,138),Size=new(144,48),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
         sidebar.Controls.Add(new Label {Text="Your computers",Location=new(0,218),Size=new(180,46),Padding=new(22,12,0,0),BackColor=Color.FromArgb(36,57,90),ForeColor=Color.White,Font=new("Segoe UI",10,FontStyle.Bold)});
         sidebar.Controls.Add(new Label {Text="Private connections\nAny network",Location=new(22,292),Size=new(143,70),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
-        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.0\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
+        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.1\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
         root.Controls.Add(sidebar,0,0);
         var content=new TableLayoutPanel {Dock=DockStyle.Fill,RowCount=3,ColumnCount=1,Padding=new(28,24,28,18),Margin=Padding.Empty};
         content.RowStyles.Add(new(SizeType.Absolute,86)); content.RowStyles.Add(new(SizeType.Percent,100)); content.RowStyles.Add(new(SizeType.Absolute,36)); root.Controls.Add(content,1,0);
@@ -348,7 +348,12 @@ public sealed class MainWindow : Form
     {
         if(!identity.Config.Controller) throw new InvalidOperationException("Enable controller first.");
         if(hosts.SelectedIndices.Count==0) throw new InvalidOperationException("Select a trusted host first.");
-        var host=identity.Config.Hosts[hosts.SelectedIndices[0]];
+        await ConnectTo(identity.Config.Hosts[hosts.SelectedIndices[0]].Fingerprint,control.Checked);
+    }
+    /// <summary>Opens a viewer on the paired host <paramref name="fingerprint"/>; the viewer's Reconnect button comes back here.</summary>
+    async Task ConnectTo(string fingerprint,bool allowControl)
+    {
+        var host=identity.Config.Hosts.Find(p=>p.Fingerprint==fingerprint) ?? throw new InvalidOperationException("That computer is no longer paired.");
         string name=PeerName.Clean(host.Name);
         connectionProgress.Text="Connecting to "+name+"…";
         Connection? connection=null;
@@ -357,11 +362,11 @@ public sealed class MainWindow : Form
             (connection,bool direct)=await Reach(host,name);
             string route=direct?"direct":"relay";
             connectionProgress.Text="Waiting for session approval on "+name+" • "+route;
-            await connection.Send(new("session",Control:control.Checked,Value:Wire.ProtocolVersion));
+            await connection.Send(new("session",Control:allowControl,Value:Wire.ProtocolVersion));
             using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
             var reply=await connection.Read(timeout.Token);
             if(reply.Kind!="ready") throw new InvalidOperationException(reply.Text??"Host rejected the session.");
-            if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to version 0.3.0 or later. Existing pairing is preserved.");
+            if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to the latest version. Existing pairing is preserved.");
             connectionProgress.Text="Connected to "+name;
             identity.Audit(host.Fingerprint,"outbound-connected");
             if(identity.UpgradeTrust(host.Fingerprint,null)) TrustChanged();
@@ -372,7 +377,12 @@ public sealed class MainWindow : Form
                 var files=direct?await Connection.Connect(host.Address,identity,host.Fingerprint):await RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,token);
                 try { await files.Send(new("files",Code:fileGrant),token); return files; } catch { files.Dispose(); throw; }
             };
-            new Viewer(connection,name,control.Checked,reply.Monitors??["Display 1"],route,openFiles).Show(this); connection=null;
+            Func<Task> reconnect=async()=>
+            {
+                try { await ConnectTo(fingerprint,allowControl); }
+                catch(Exception e) { connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning); }
+            };
+            new Viewer(connection,name,allowControl,reply.Monitors??["Display 1"],route,openFiles,reconnect).Show(this); connection=null;
         }
         finally { connection?.Dispose(); }
     }

@@ -8,7 +8,8 @@ public sealed class InputMailbox
     readonly Channel<byte> signal=Channel.CreateBounded<byte>(new BoundedChannelOptions(1) {SingleReader=true,FullMode=BoundedChannelFullMode.DropWrite});
     readonly int capacity;
     Packet? motion;
-    public InputMailbox(int capacity=128) { if(capacity<2) throw new ArgumentOutOfRangeException(nameof(capacity)); this.capacity=capacity; }
+    // Room for several seconds of typing and wheel clicks while a file copy holds the link back.
+    public InputMailbox(int capacity=2048) { if(capacity<2) throw new ArgumentOutOfRangeException(nameof(capacity)); this.capacity=capacity; }
     public bool Post(Packet packet)
     {
         lock(sync)

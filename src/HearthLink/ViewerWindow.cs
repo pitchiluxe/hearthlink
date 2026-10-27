@@ -12,7 +12,7 @@ public sealed class Viewer : Form
         protected override bool IsInputKey(Keys keyData)=>true;
         /// <summary>
         /// Shows a decoded frame and reports it presented at once. Waiting for a paint would stall the session whenever the
-        /// viewer is minimized or covered (Windows sends no paint then), and the host stops after 8 s without acknowledgements.
+        /// viewer is minimized or covered (Windows sends no paint then), and the host stops after <see cref="FrameWindow.StallLimit"/> without acknowledgements.
         /// </summary>
         public void ShowFrame(Image image,long sequence) { var old=Image; Image=image; old?.Dispose(); Invalidate(); Presented?.Invoke(sequence); }
     }
@@ -32,10 +32,13 @@ public sealed class Viewer : Form
     readonly Stopwatch barIdle=new();
     TimeSpan barHold;
     // Open while a file dialog or browser is up, so the toolbar does not slide away under it.
-    bool holdBar, menuOpen;
+    bool holdBar, menuOpen, closing;
     TransferStrip? transfers;
     FileManagerWindow? fileManager;
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null)
+    // Covers the last frame once the session ends, so a dead session never looks like a frozen but live one.
+    readonly Panel lost=new() {Visible=false,BackColor=Brand.Navy,Size=new(480,150),Padding=new(16)};
+    readonly Label lostText=new() {Dock=DockStyle.Fill,ForeColor=Color.White,TextAlign=ContentAlignment.MiddleCenter};
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null)
     {
         connection=c; control=allowControl;
         Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(640,400); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
@@ -80,7 +83,17 @@ public sealed class Viewer : Form
         bar.Controls.AddRange([fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();
         // Added after the screen so it docks first and the screen fills what is left.
         if(transfers!=null) Controls.Add(transfers);
-        Resize+=(_,_)=>PlaceBar(); bar.SizeChanged+=(_,_)=>PlaceBar();
+        var lostButtons=new FlowLayoutPanel {Dock=DockStyle.Bottom,AutoSize=true,FlowDirection=FlowDirection.RightToLeft,WrapContents=false};
+        var close=Brand.Style(new Button {Text="Close",AutoSize=true}); close.Click+=(_,_)=>Close();
+        lostButtons.Controls.Add(close);
+        if(reconnect!=null)
+        {
+            var again=Brand.Style(new Button {Text="Reconnect",AutoSize=true},true);
+            again.Click+=(_,_)=> { Close(); _=reconnect(); };
+            lostButtons.Controls.Add(again);
+        }
+        lost.Controls.AddRange([lostText,lostButtons]); Controls.Add(lost);
+        Resize+=(_,_)=> { PlaceBar(); PlaceLost(); }; bar.SizeChanged+=(_,_)=>PlaceBar();
         barTimer.Tick+=(_,_)=>
         {
             bool over=bar.Visible && bar.Bounds.Contains(PointToClient(Cursor.Position));
@@ -110,12 +123,26 @@ public sealed class Viewer : Form
                 shownFrames=0; counter.Restart();
             }
         };
-        FormClosed+=(_,_)=> {barTimer.Dispose(); transfers?.Cancel(); fileManager?.Close(); stop.Cancel(); connection.Dispose(); screen.Image?.Dispose(); screen.Image=null;};
+        FormClosed+=(_,_)=> {closing=true; barTimer.Dispose(); transfers?.Cancel(); fileManager?.Close(); stop.Cancel(); Drop(); screen.Image?.Dispose(); screen.Image=null;};
         Shown+=async(_,_)=>
         {
-            var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); connection.Dispose();
+            var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); Drop();
             try {await writing;} catch(OperationCanceledException) { }
         };
+    }
+    /// <summary>
+    /// Closes the session connection on a pool thread. Closing a relay tunnel waits up to 3 s for the close handshake,
+    /// which would freeze the window if done on the UI thread.
+    /// </summary>
+    void Drop()=>_=Task.Run(connection.Dispose);
+    void PlaceLost()=>lost.Location=new(Math.Max(0,(ClientSize.Width-lost.Width)/2),Math.Max(0,(ClientSize.Height-lost.Height)/2));
+    /// <summary>Shows why the session ended over the remote screen, with Reconnect and Close.</summary>
+    void Lose(string message)
+    {
+        if(IsDisposed || lost.Visible) return;
+        status.Text="Disconnected"; lostText.Text=message;
+        PlaceLost(); lost.Visible=true; lost.BringToFront();
+        transfers?.Cancel();
     }
     /// <summary>A toolbar button showing the current option ("Balanced ▾") that opens a menu of the options.</summary>
     Button Choice(string[] options,int selected,Action<int> chosen)
@@ -158,12 +185,12 @@ public sealed class Viewer : Form
     void Post(Packet packet)
     {
         if(stop.IsCancellationRequested || (!control && packet.Kind is "key" or "move" or "button" or "wheel" or "release")) return;
-        if(!outbound.Post(packet)) {status.Text="Disconnected • input link stalled"; stop.Cancel(); connection.Dispose();}
+        if(!outbound.Post(packet)) {stop.Cancel(); Drop(); Lose("The connection to the other PC stopped responding.");}
     }
     async Task WriteInput()
     {
         try {while(!stop.IsCancellationRequested) {var packet=await outbound.ReadAsync(stop.Token); await connection.Send(packet,stop.Token);}}
-        catch(Exception e) when(e is IOException or ObjectDisposedException or OperationCanceledException) {stop.Cancel(); connection.Dispose();}
+        catch(Exception e) when(e is IOException or ObjectDisposedException or OperationCanceledException) {stop.Cancel(); Drop();}
     }
     async Task ReadFrames()
     {
@@ -191,7 +218,8 @@ public sealed class Viewer : Form
         }
         catch(Exception e) when(e is IOException or ObjectDisposedException or OperationCanceledException or InvalidDataException or ArgumentException or FormatException or InvalidOperationException or System.Runtime.InteropServices.ExternalException)
         {
-            if(!IsDisposed) {try {await this.InvokeAsync(()=>status.Text="Disconnected • close and reconnect from dashboard");} catch(InvalidOperationException) { }}
+            // Closing the window ends the read too; anything else means the session ended under the viewer.
+            if(!IsDisposed && !closing) {try {await this.InvokeAsync(()=>Lose("The session with the other PC ended. It may have lost its connection or been ended there."));} catch(InvalidOperationException) { }}
         }
         finally {connection.Dispose();}
     }
