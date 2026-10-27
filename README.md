@@ -1,10 +1,12 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.4.1 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.4.2 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
 
 Version 0.4.0 adds an optional **AI helper** in the file manager (needs Ollama on the controlling PC; see File transfer below) and lifts the 20,000-item transfer limit to 1,000,000, so large project folders copy in one go.
 
 Version 0.4.1 keeps sessions alive when Windows refuses a click (administrator windows, UAC prompts) and while a file copy shares a slow connection, shows a **Reconnect** panel when a session ends instead of a frozen picture, and replaces same-named files on transfer instead of saving `name (2)` copies. Update **both** PCs: 0.4.1 cannot connect to 0.4.0 or earlier.
+
+Version 0.4.2 colors the paired computers list by status: green rows with a green stripe are online, red rows with a red stripe are offline or refused the connection, and grey rows have not been checked yet. The count above the list shows how many are online and offline. Rows are taller, dates are shorter ("Today 10:21 AM"), and the list scrolls with the mouse wheel or its scrollbar without a sideways scrollbar. 0.4.2 connects to 0.4.1.
 
 **Unattended access (new in 0.4.0):** the host setting **Let my paired PCs connect when I'm away** lets every PC already paired with this one start a session without the per-session Allow dialog. It is off by default, and turning it on or off needs Windows Hello (PIN, face or fingerprint) at the host; if Windows Hello is not set up, HearthLink explains how to add a PIN and leaves the switch unchanged. Unpaired PCs still cannot connect. Every unattended session still shows the host banner and tray icon with **End session**, raises a Windows notification, writes `unattended-connected` to session history, and disconnects after 30 minutes without input from the controller (keyboard, mouse, display or quality changes; a view-only viewer that only watches is disconnected after 30 minutes). The decision is fixed rules only: the switch plus the controller's pinned certificate fingerprint. Nothing the other PC sends, such as its name, is consulted. Start at sign-in and close-to-tray are not in this build yet, so HearthLink must be open and the host signed in and unlocked. If Windows Hello is later removed, turn off **Allow incoming sessions** or close HearthLink to stop all incoming sessions.
 
