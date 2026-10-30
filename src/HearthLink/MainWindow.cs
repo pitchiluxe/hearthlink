@@ -56,7 +56,7 @@ public sealed class MainWindow : Form
         sidebar.Controls.Add(new Label {Text="A little closer to home.",Location=new(22,138),Size=new(144,48),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
         sidebar.Controls.Add(new Label {Text="Your computers",Location=new(0,218),Size=new(180,46),Padding=new(22,12,0,0),BackColor=Color.FromArgb(36,57,90),ForeColor=Color.White,Font=new("Segoe UI",10,FontStyle.Bold)});
         sidebar.Controls.Add(new Label {Text="Private connections\nAny network",Location=new(22,292),Size=new(143,70),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
-        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.3\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
+        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.4\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
         root.Controls.Add(sidebar,0,0);
         var content=new TableLayoutPanel {Dock=DockStyle.Fill,RowCount=3,ColumnCount=1,Padding=new(28,24,28,18),Margin=Padding.Empty};
         content.RowStyles.Add(new(SizeType.Absolute,86)); content.RowStyles.Add(new(SizeType.Percent,100)); content.RowStyles.Add(new(SizeType.Absolute,36)); root.Controls.Add(content,1,0);
@@ -152,29 +152,36 @@ public sealed class MainWindow : Form
         hosts.DrawColumnHeader+=(_,e)=> { using var brush=new SolidBrush(Color.FromArgb(246,248,252)); e.Graphics.FillRectangle(brush,e.Bounds); TextRenderer.DrawText(e.Graphics,e.Header?.Text??"",new Font("Segoe UI",9),new Rectangle(e.Bounds.X+8,e.Bounds.Y,e.Bounds.Width-8,e.Bounds.Height),Brand.Muted,TextFormatFlags.VerticalCenter); };
         // Taller rows are easier to read and click; a ListView takes its row height from its image list.
         hosts.SmallImageList=new ImageList {ImageSize=new(1,30)};
-        // Each row is washed in its status color with a solid stripe on the left: green online, red offline or refused, grey before the first check.
-        // The whole row, text included, is drawn here: with full-row select, Windows repaints the row under the pointer through
-        // DrawItem alone, so text drawn in DrawSubItem vanished on hover.
+        // DrawItem also fires on hover without cell events (a Win32 ListView quirk).
+        // Keep it empty: every cell paints its own background and text in one pass.
         var bold=new Font(Font,FontStyle.Bold); hosts.Disposed+=(_,_)=>bold.Dispose();
-        hosts.DrawItem+=(_,e)=>
+        hosts.DrawSubItem+=(_,e)=>
         {
+            if(e.Item==null || e.SubItem==null) return;
             var tint=Tint(e.Item.SubItems[2].Text);
-            using(var wash=new SolidBrush(e.Item.Selected?tint.Selected:tint.Wash)) e.Graphics.FillRectangle(wash,e.Bounds);
-            using(var stripe=new SolidBrush(tint.Stripe)) e.Graphics.FillRectangle(stripe,e.Bounds.X,e.Bounds.Y,6,e.Bounds.Height);
-            using(var line=new Pen(Color.White)) e.Graphics.DrawLine(line,e.Bounds.Left,e.Bounds.Bottom-1,e.Bounds.Right,e.Bounds.Bottom-1);
-            if(e.Item.Selected) { using var outline=new Pen(Brand.Blue); e.Graphics.DrawRectangle(outline,e.Bounds.X+6,e.Bounds.Y,e.Bounds.Width-7,e.Bounds.Height-2); }
-            int x=e.Bounds.X;
-            for(int column=0;column<hosts.Columns.Count && column<e.Item.SubItems.Count;column++)
+            var bounds=e.Bounds;
+            // The native first-cell bounds can span the entire row under full-row selection.
+            if(e.ColumnIndex==0) bounds.Width=hosts.Columns[0].Width;
+            using(var wash=new SolidBrush(e.Item.Selected?tint.Selected:tint.Wash)) e.Graphics.FillRectangle(wash,bounds);
+            if(e.ColumnIndex==0)
+                using(var stripe=new SolidBrush(tint.Stripe)) e.Graphics.FillRectangle(stripe,bounds.X,bounds.Y,6,bounds.Height);
+            using(var line=new Pen(Color.White)) e.Graphics.DrawLine(line,bounds.Left,bounds.Bottom-1,bounds.Right,bounds.Bottom-1);
+            if(e.Item.Selected)
             {
-                int width=hosts.Columns[column].Width, left=column==0?16:8;
-                Color color=column==2?tint.Text:column==0?Brand.Ink:Brand.Muted;
-                string text=column==2?"●  "+e.Item.SubItems[column].Text:e.Item.SubItems[column].Text;
-                TextRenderer.DrawText(e.Graphics,text,column is 0 or 2?bold:Font,new Rectangle(x+left,e.Bounds.Y,width-left,e.Bounds.Height),color,TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis);
-                x+=width;
+                using var outline=new Pen(Brand.Blue);
+                int left=bounds.Left+(e.ColumnIndex==0?6:0);
+                e.Graphics.DrawLine(outline,left,bounds.Top,bounds.Right,bounds.Top);
+                e.Graphics.DrawLine(outline,left,bounds.Bottom-2,bounds.Right,bounds.Bottom-2);
+                if(e.ColumnIndex==0) e.Graphics.DrawLine(outline,left,bounds.Top,left,bounds.Bottom-2);
+                if(e.ColumnIndex==hosts.Columns.Count-1) e.Graphics.DrawLine(outline,bounds.Right-1,bounds.Top,bounds.Right-1,bounds.Bottom-2);
             }
+            int inset=e.ColumnIndex==0?16:8;
+            Color color=e.ColumnIndex==2?tint.Text:e.ColumnIndex==0?Brand.Ink:Brand.Muted;
+            string text=e.ColumnIndex==2?"●  "+e.SubItem.Text:e.SubItem.Text;
+            TextRenderer.DrawText(e.Graphics,text,e.ColumnIndex is 0 or 2?bold:Font,
+                new Rectangle(bounds.X+inset,bounds.Y,Math.Max(0,bounds.Width-inset),bounds.Height),color,
+                TextFormatFlags.VerticalCenter|TextFormatFlags.EndEllipsis|TextFormatFlags.NoPrefix|TextFormatFlags.PreserveGraphicsClipping);
         };
-        // DrawItem has painted everything; leaving the default here would paint over it.
-        hosts.DrawSubItem+=(_,_)=> { };
         hosts.Resize+=(_,_)=>FitHostColumns();
     }
     /// <summary>Spreads the columns over the visible width, leaving room for the vertical scrollbar so no sideways scrollbar appears.</summary>

@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.4.3 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.4.4 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.4.4 fixes the computer table's hover painting by drawing each status stripe, background and text cell together in DrawSubItem, avoiding the native hover-only DrawItem event. Includes clipped-cell and repeated-hover regression checks. Connects to 0.4.1–0.4.3. See the [app audit and improvement priorities](docs/APP-AUDIT-2026-10-30.md).
 
 Version 0.4.0 adds an optional **AI helper** in the file manager (needs Ollama on the controlling PC; see File transfer below) and lifts the 20,000-item transfer limit to 1,000,000, so large project folders copy in one go.
 
