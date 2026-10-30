@@ -53,7 +53,7 @@ public sealed class Viewer : Form
     public bool SessionActive=>!stop.IsCancellationRequested && !closing && !sessionLost;
     [System.ComponentModel.Browsable(false)]
     public bool CanTransfer=>SessionActive && control && filesFactory!=null;
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=0,AiRuntime? aiRuntime=null)
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=2,AiRuntime? aiRuntime=null)
     {
         connection=c; control=allowControl;
         filesFactory=openFiles; observeTransfer=observeTransfers;

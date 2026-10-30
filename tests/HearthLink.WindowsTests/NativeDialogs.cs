@@ -30,7 +30,12 @@ static class NativeDialogs
         while(true)
         {
             var dialogs=Open(thread);
-            if(dialogs.Count>0) { string text=Text(dialogs[0]); Press(dialogs[0],button); return text; }
+            if(dialogs.Count>0)
+            {
+                // The native dialog can be enumerated before its static text control is initialized.
+                string text=Text(dialogs[0]);
+                if(text.Length>0) {Press(dialogs[0],button); return text;}
+            }
             if(clock.Elapsed>limit) throw new TimeoutException("No message box within "+limit);
             await Task.Delay(100);
         }

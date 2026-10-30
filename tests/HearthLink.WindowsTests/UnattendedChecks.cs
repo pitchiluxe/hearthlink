@@ -113,7 +113,8 @@ static class UnattendedChecks
         {
             await c.Send(new("session",Control:true,Value:Wire.ProtocolVersion));
             string prompt=await NativeDialogs.Answer(uiThread,NativeDialogs.No,TimeSpan.FromSeconds(15));
-            check(prompt.Contains("access requested") && (await c.Read()).Kind=="denied","after turning it off, sessions need the Allow dialog again");
+            var reply=await c.Read();
+            check(prompt.Contains("access requested") && reply.Kind=="denied",$"after turning it off, sessions need the Allow dialog again (prompt characters: {prompt.Length}, result: {reply.Kind})");
         }
         await window.OnUi(()=> { window.VerifyPresence=_=>Task.FromResult(new PresenceCheck(false)); return true; });
         await Task.Delay(300);

@@ -83,7 +83,7 @@ static class NavigationChecks
             typeof(MainWindow).GetMethod("PopulateHosts",flags)!.Invoke(owner,null); identity.Save();
         }
         var defaults=new Settings();
-        check(defaults.DefaultControl && defaults.DefaultQuality==0 && defaults.Favorites.Count==0,"older settings retain compatible default session preferences");
+        check(defaults.DefaultControl && defaults.DefaultQuality==2 && defaults.Favorites.Count==0,"new profiles default to Full detail image quality");
         check(!defaults.Ai.CloudFallback && defaults.Ai.PerformanceAgent && defaults.Ai.MinimumQuality==0 && defaults.Ai.MaximumQuality==2,"AI defaults keep cloud fallback off and automatic quality in the approved range");
         var aiTabs=Descendants(owner).OfType<TabControl>().Single(t=>t.Name=="SettingsTabs");
         check(aiTabs.TabPages.Count==2 && Descendants(owner).OfType<TextBox>().Where(t=>t.Name is "OpenAIKey" or "ClaudeKey").All(t=>t.UseSystemPasswordChar),"Settings includes AI provider controls with masked API key fields");
@@ -118,6 +118,14 @@ static class NavigationChecks
             check(store.ReadHistory().Count==1000,"history skips damaged lines and caps the returned tail at 1000 records");
             File.WriteAllText(Path.Combine(folder,"history.jsonl"),new string('x',600_000)+"\n"); store.Audit(second,"connected");
             check(store.ReadHistory() is {Count:1} tail && tail[0].Outcome=="connected","large history reads a bounded tail and discards the first partial line");
+            string legacy=System.Text.Json.JsonSerializer.Serialize(new {DefaultQuality=0,Controller=true});
+            File.WriteAllBytes(Path.Combine(folder,"settings.protected"),System.Security.Cryptography.ProtectedData.Protect(System.Text.Encoding.UTF8.GetBytes(legacy),null,System.Security.Cryptography.DataProtectionScope.CurrentUser));
+            var upgraded=new IdentityStore(folder);
+            check(upgraded.Config.DefaultQuality==2,"existing profiles migrate once to the Full detail default");
+            upgraded.Config.DefaultQuality=1; upgraded.Save();
+            var chosen=new IdentityStore(folder);
+            check(chosen.Config.DefaultQuality==1,"a later explicit quality preference survives restart after migration");
+            upgraded.Certificate.Dispose(); chosen.Certificate.Dispose();
             store.Certificate.Dispose(); loaded.Certificate.Dispose();
         }
         finally {Directory.Delete(folder,true);}

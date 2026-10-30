@@ -32,6 +32,15 @@ static class ViewerChecks
         hostEnd.Dispose();
         check(acked.SequenceEqual([1L,2L,3L]),"a minimized viewer still acknowledges every frame");
 
+        var (defaultEnd,defaultHost)=await FileChecks.Linked(host,controller);
+        var defaultViewer=await window.OnUi(()=> {var v=new Viewer(defaultEnd,"default quality",false,["1: test"]) {ShowInTaskbar=false,WindowState=FormWindowState.Minimized}; v.Show(); return v;});
+        try
+        {
+            var defaultProfile=await defaultHost.Read(limit.Token);
+            check(defaultProfile.Kind=="profile" && defaultProfile.Value==2,"a default viewer requests Full detail from the remote host");
+        }
+        finally {await window.OnUi(()=> {defaultViewer.Close(); return true;}); defaultHost.Dispose();}
+
         bool ended=false;
         // Do not depend on or move the user's actual pointer: hovering intentionally keeps the notice open.
         var shown=await window.OnUi(()=> { var n=new SessionNotice("TECHNOBIZ-ASUS",true,()=>ended=true,TimeSpan.FromMilliseconds(300),()=>Point.Empty); n.Show(); return (Notice:n,Full:!n.Collapsed && n.Height>100); });

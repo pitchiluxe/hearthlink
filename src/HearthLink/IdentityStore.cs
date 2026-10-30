@@ -13,7 +13,8 @@ public sealed class Settings
     public bool Host { get; set; }
     public bool Controller { get; set; }=true;
     public bool DefaultControl {get;set;}=true;
-    public int DefaultQuality {get;set;}
+    public int DefaultQuality {get;set;}=2;
+    public int QualityDefaultsVersion {get;set;}
     public List<string> Favorites {get;set;}=[];
     public AiOptions Ai {get;set;}=new();
     public TrustBook Controllers { get; set; }=new();
@@ -43,6 +44,8 @@ public sealed class IdentityStore
         Directory.CreateDirectory(root);
         string config=Path.Combine(root,"settings.protected");
         Config=File.Exists(config) ? JsonSerializer.Deserialize<Settings>(Unprotect(File.ReadAllBytes(config))) ?? throw new InvalidDataException("Invalid settings") : new();
+        // Apply the requested Full detail default once to pre-existing profiles; later choices remain user-controlled.
+        if(Config.QualityDefaultsVersion<1) {Config.DefaultQuality=2; Config.QualityDefaultsVersion=1;}
         string key=Path.Combine(root,"identity.protected");
         if(File.Exists(key)) Certificate=X509CertificateLoader.LoadPkcs12(Unprotect(File.ReadAllBytes(key)),null,X509KeyStorageFlags.UserKeySet);
         else
