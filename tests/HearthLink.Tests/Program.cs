@@ -204,6 +204,7 @@ static System.Security.Cryptography.X509Certificates.X509Certificate2 TestCertif
     return System.Security.Cryptography.X509Certificates.X509CertificateLoader.LoadPkcs12(ephemeral.Export(System.Security.Cryptography.X509Certificates.X509ContentType.Pfx),null,System.Security.Cryptography.X509Certificates.X509KeyStorageFlags.UserKeySet);
 }
 UnattendedChecks.Run(Check);
+HistoryChecks.Run(Check);
 await UpdateChecks.Run(Check);
 await AssistantChecks.Run(Check);
 Console.WriteLine($"{passed} checks passed.");

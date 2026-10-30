@@ -14,11 +14,13 @@ static class ViewerChecks
     {
         var (viewerEnd,hostEnd)=await FileChecks.Linked(host,controller);
         // A minimized (or fully covered) window gets no paint messages; the session must still flow.
-        var viewer=await window.OnUi(()=> { var v=new Viewer(viewerEnd,"minimized",false,["1: test"]) {ShowInTaskbar=false,WindowState=FormWindowState.Minimized}; v.Show(); return v; });
+        var viewer=await window.OnUi(()=> { var v=new Viewer(viewerEnd,"minimized",false,["1: test"],initialQuality:3) {ShowInTaskbar=false,WindowState=FormWindowState.Minimized}; v.Show(); return v; });
         using var limit=new CancellationTokenSource(TimeSpan.FromSeconds(15));
         var acked=new List<long>();
         try
         {
+            var initial=await hostEnd.Read(limit.Token);
+            check(initial.Kind=="profile" && initial.Value==3,"saved quality is sent to the host when a new viewer starts");
             for(long sequence=1;sequence<=3;sequence++)
             {
                 await hostEnd.Send(new("frame",Frame:new(Jpeg((int)sequence),64,48,0,sequence,100,100,10)),limit.Token);

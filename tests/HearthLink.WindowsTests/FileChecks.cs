@@ -88,9 +88,16 @@ static class FileChecks
         async Task<Connection> Open(CancellationToken t) { var (c,h)=await Linked(host,controller); _=new FileHost(Path.Combine(root,"strip-unused")).Serve(h,CancellationToken.None); return c; }
         bool Same(string a,string b)=>Directory.GetFiles(a,"*",SearchOption.AllDirectories).Select(f=>Path.GetRelativePath(a,f)+"="+File.ReadAllText(f)).Order().SequenceEqual(Directory.GetFiles(b,"*",SearchOption.AllDirectories).Select(f=>Path.GetRelativePath(b,f)+"="+File.ReadAllText(f)).Order())
             && Directory.GetDirectories(a,"*",SearchOption.AllDirectories).Select(d=>Path.GetRelativePath(a,d)).Order().SequenceEqual(Directory.GetDirectories(b,"*",SearchOption.AllDirectories).Select(d=>Path.GetRelativePath(b,d)).Order());
-        var strip=await window.OnUi(()=>new TransferStrip(Open));
+        var activity=new List<TransferActivity>();
+        var strip=await window.OnUi(()=>
+        {
+            var created=new TransferStrip(Open); created.ActivityChanged+=activity.Add;
+            typeof(MainWindow).GetMethod("ObserveTransfer",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,[created,"Transfer fixture"]);
+            return created;
+        });
         await (await window.OnUi(()=>strip.Send([tree,Path.Combine(near,"loose.txt")],far)));
         await (await window.OnUi(()=>strip.Send([tree],far)));
+        check(activity.Count(a=>a.State=="Completed" && a.Percent==100)==2 && activity.Any(a=>a.State=="Copying"),"real file copies report progress and completed batches to the transfer center");
         check(Same(tree,Path.Combine(far,"Trip")) && !Directory.Exists(Path.Combine(far,"Trip (2)")) && File.ReadAllText(Path.Combine(far,"loose.txt"))=="x","copy to the remote pane recreates folder trees in its folder and a second copy replaces the first");
         string back=Path.Combine(root,"strip-back"); Directory.CreateDirectory(back);
         await (await window.OnUi(()=>strip.Get([(Path.Combine(far,"Trip"),true,0L),(Path.Combine(far,"loose.txt"),false,1L)],back)));

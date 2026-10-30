@@ -22,18 +22,45 @@ internal static class Preview
                 window.DrawToBitmap(image,new Rectangle(Point.Empty,image.Size));
                 string path=Path.Combine(output,$"HearthLink-{size.Width}.png"); image.Save(path,ImageFormat.Png); Console.WriteLine(path);
             }
+            foreach(string section in new[]{"Recent sessions","File transfers","Access & security","Connection health","Session history","Settings","Help & updates"})
+            {
+                typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,[section]);
+                Application.DoEvents();
+                using var image=new Bitmap(window.Width,window.Height);
+                window.DrawToBitmap(image,new Rectangle(Point.Empty,image.Size));
+                string path=Path.Combine(output,"HearthLink-"+section.Replace(' ','-').Replace('&','a')+".png");
+                image.Save(path,ImageFormat.Png); Console.WriteLine(path);
+            }
+            typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,["Help & updates"]);
             Button? FindUpdates(Control root)
             {
                 foreach(Control child in root.Controls)
                 {if(child is Button button && button.Text=="App updates") return button; if(FindUpdates(child) is Button nested) return nested;}
                 return null;
             }
+            typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,["Your computers"]);
             FindUpdates(window)!.PerformClick(); Application.DoEvents();
             using(var updates=window.OwnedForms.Single(f=>f.Text=="HearthLink • Updates"))
             {
                 using var image=new Bitmap(updates.Width,updates.Height);
                 updates.DrawToBitmap(image,new Rectangle(Point.Empty,image.Size));
                 string path=Path.Combine(output,"HearthLink-updates.png"); image.Save(path,ImageFormat.Png); Console.WriteLine(path);
+            }
+            // Scaled-layout checks supplement native DPI acceptance; this does not change Windows display settings.
+            float previousScale=1;
+            foreach(float scale in new[]{1.25f,2f})
+            {
+                window.Scale(new SizeF(scale/previousScale,scale/previousScale)); previousScale=scale;
+                window.ClientSize=new((int)(1120*scale),(int)(790*scale));
+                foreach(string section in new[]{"Your computers","Access & security","Settings"})
+                {
+                    typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,[section]);
+                    Application.DoEvents();
+                    using var image=new Bitmap(window.Width,window.Height);
+                    window.DrawToBitmap(image,new Rectangle(Point.Empty,image.Size));
+                    string path=Path.Combine(output,$"HearthLink-{section.Replace(' ','-').Replace('&','a')}-scaled-{scale*100:0}.png");
+                    image.Save(path,ImageFormat.Png); Console.WriteLine(path);
+                }
             }
             window.Close();
         }

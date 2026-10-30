@@ -12,6 +12,9 @@ public sealed class Settings
     public bool CheckUpdates {get;set;}=true;
     public bool Host { get; set; }
     public bool Controller { get; set; }=true;
+    public bool DefaultControl {get;set;}=true;
+    public int DefaultQuality {get;set;}
+    public List<string> Favorites {get;set;}=[];
     public TrustBook Controllers { get; set; }=new();
     public List<Peer> Hosts { get; set; }=[];
     /// <summary>A relay the user chose; empty means the app's built-in <see cref="RelayClient.DefaultUrl"/>, so saved settings follow app updates.</summary>
@@ -94,5 +97,26 @@ public sealed class IdentityStore
     {
         // Metadata only; no names supplied by remote callers, content, code or key material.
         File.AppendAllText(Path.Combine(root,"history.jsonl"),JsonSerializer.Serialize(new {at=DateTimeOffset.UtcNow,peer=fingerprint,outcome})+Environment.NewLine);
+    }
+    /// <summary>At most the last 512 KiB/1000 valid metadata records, newest first. No identity or content is exported.</summary>
+    public IReadOnlyList<HistoryEntry> ReadHistory()
+    {
+        string path=Path.Combine(root,"history.jsonl");
+        if(!File.Exists(path)) return [];
+        using var stream=new FileStream(path,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+        long length=stream.Length; bool tail=length>512*1024;
+        long start=Math.Max(0,length-512*1024); stream.Seek(start,SeekOrigin.Begin);
+        byte[] bytes=new byte[(int)(length-start)]; int read=0;
+        while(read<bytes.Length) {int count=stream.Read(bytes,read,bytes.Length-read); if(count==0) break; read+=count;}
+        using var snapshot=new MemoryStream(bytes,0,read);
+        using var reader=new StreamReader(snapshot);
+        if(tail) reader.ReadLine();
+        var entries=new Queue<HistoryEntry>();
+        while(reader.ReadLine() is {} line)
+        {
+            if(HistoryEntry.Parse(line) is not {} entry) continue;
+            entries.Enqueue(entry); if(entries.Count>1000) entries.Dequeue();
+        }
+        return entries.Reverse().ToArray();
     }
 }

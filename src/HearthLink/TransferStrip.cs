@@ -2,6 +2,7 @@ using HearthLink.Core;
 using System.Security.Authentication;
 
 namespace HearthLink;
+public sealed record TransferActivity(Guid Id,string State,string Message,int Percent,DateTimeOffset Started);
 /// <summary>The bottom strip while files move: one batch at a time on its own files connection, with progress and Cancel.</summary>
 public sealed class TransferStrip : Panel
 {
@@ -23,6 +24,7 @@ public sealed class TransferStrip : Panel
     public event Action<Batch>? Started;
     /// <summary>Raised when a batch ends: the message shown in the strip, and whether it failed (not finished or cancelled).</summary>
     public event Action<Batch,string,bool>? Ended;
+    public event Action<TransferActivity>? ActivityChanged;
     public TransferStrip(Func<CancellationToken,Task<Connection>> openFiles)
     {
         open=openFiles; Dock=DockStyle.Bottom; Height=44; BackColor=Brand.Navy; Visible=false; Padding=new(0,6,8,6);
@@ -125,8 +127,15 @@ public sealed class TransferStrip : Panel
     {
         if(running!=null) { Notice("A transfer is already running. Wait or cancel it first."); return; }
         using var cts=new CancellationTokenSource(); running=cts;
+        Guid activityId=Guid.NewGuid(); var startedAt=DateTimeOffset.Now; string activityState="Preparing"; int lastPercent=-1;
+        void Report(string state,string message,int percent)
+        {
+            activityState=state;
+            ActivityChanged?.Invoke(new(activityId,state,message,percent,startedAt));
+        }
         fade.Stop(); folder.Visible=false; cancel.Visible=true; progress.Visible=true; Visible=true; BringToFront();
         text.Text=$"{verb}: preparing…"; progress.Value=0;
+        Report("Preparing",text.Text,0);
         int files=0; Batch batch=new(verb,0,0,[]); bool failed=false;
         try
         {
@@ -138,20 +147,29 @@ public sealed class TransferStrip : Panel
             for(int i=0;i<jobs.Count;i++)
             {
                 var job=jobs[i]; int index=i;
-                void Show(long bytes) { int share=job.Size<=0?1000:(int)Math.Clamp(bytes*1000/job.Size,0,1000); progress.Value=share; text.Text=$"{verb} {job.Name} • {share/10}% • {index+1} of {jobs.Count}"; }
+                void Show(long bytes)
+                {
+                    if(running!=cts || IsDisposed) return;
+                    int share=job.Size<=0?1000:(int)Math.Clamp(bytes*1000/job.Size,0,1000); progress.Value=share;
+                    text.Text=$"{verb} {job.Name} • {share/10}% • {index+1} of {jobs.Count}";
+                    int overall=(int)(((long)index*1000+share)*100/Math.Max(1,jobs.Count*1000L));
+                    if(overall!=lastPercent) {lastPercent=overall; Report("Copying",text.Text,overall);}
+                }
                 Show(0);
                 await job.Do(client,new Progress<long>(Show),cts.Token);
                 if(job.IsFile) files++;
             }
             text.Text=done(files);
+            activityState="Completed";
             if(opens!=null) { openTarget=opens; folder.Visible=true; }
         }
-        catch(OperationCanceledException) { text.Text=files>0?$"Transfer stopped after {Files(files)}":"Transfer stopped"; }
+        catch(OperationCanceledException) { activityState="Cancelled"; text.Text=files>0?$"Transfer stopped after {Files(files)}":"Transfer stopped"; }
         catch(Exception e) when(e is IOException or InvalidOperationException or InvalidDataException or UnauthorizedAccessException or AuthenticationException or ArgumentException)
         {
             failed=true;
+            activityState="Failed";
             text.Text="Transfer stopped: "+(e is IOException && e.GetType()!=typeof(FileNotFoundException)?"the connection to the other PC was lost.":e.Message);
         }
-        finally { running=null; cancel.Visible=false; progress.Visible=false; fade.Start(); Ended?.Invoke(batch,text.Text,failed); Finished?.Invoke(); }
+        finally { running=null; cancel.Visible=false; progress.Visible=false; fade.Start(); Report(activityState,text.Text,activityState=="Completed"?100:Math.Max(0,lastPercent)); Ended?.Invoke(batch,text.Text,failed); Finished?.Invoke(); }
     }
 }

@@ -15,6 +15,7 @@ public sealed class UpdateCenter : IDisposable
     AppRelease? available;
     string status="Check for a newer version of HearthLink.";
     bool checking;
+    public event Action<Version?>? AvailabilityChanged;
     public static Version Installed {get;}=new(typeof(MainWindow).Assembly.GetName().Version!.ToString(3));
     public UpdateCenter(MainWindow owner,IdentityStore identity,HttpClient? client=null)
     {
@@ -42,6 +43,7 @@ public sealed class UpdateCenter : IDisposable
         {
             using var timeout=CancellationTokenSource.CreateLinkedTokenSource(stop.Token); timeout.CancelAfter(TimeSpan.FromSeconds(25));
             available=await new AppUpdates(http).CheckAsync(Installed,timeout.Token);
+            AvailabilityChanged?.Invoke(available?.Version);
             status=available==null?"You have the latest published version.":$"HearthLink {available.Version} is ready to download.";
             if(available!=null && !manual)
             {

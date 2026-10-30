@@ -32,19 +32,29 @@ public sealed class Viewer : Form
     readonly Stopwatch barIdle=new();
     TimeSpan barHold;
     // Open while a file dialog or browser is up, so the toolbar does not slide away under it.
-    bool holdBar, menuOpen, closing;
+    bool holdBar, menuOpen, closing,sessionLost;
     TransferStrip? transfers;
     FileManagerWindow? fileManager;
     // Covers the last frame once the session ends, so a dead session never looks like a frozen but live one.
     readonly Panel lost=new() {Visible=false,BackColor=Brand.Navy,Size=new(480,150),Padding=new(16)};
     readonly Label lostText=new() {Dock=DockStyle.Fill,ForeColor=Color.White,TextAlign=ContentAlignment.MiddleCenter};
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null)
+    readonly Func<CancellationToken,Task<Connection>>? filesFactory;
+    readonly Action<TransferStrip>? observeTransfer;
+    public event Action? SessionStateChanged;
+    [System.ComponentModel.Browsable(false)]
+    public bool SessionActive=>!stop.IsCancellationRequested && !closing && !sessionLost;
+    [System.ComponentModel.Browsable(false)]
+    public bool CanTransfer=>SessionActive && control && filesFactory!=null;
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=0)
     {
         connection=c; control=allowControl;
+        filesFactory=openFiles; observeTransfer=observeTransfers;
         Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(640,400); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
         // Menu buttons, as in TeamViewer's toolbar: a menu pops up above everything, where combo box lists failed to open on some PCs.
         var displays=Choice(monitors,0,index=> {Volatile.Write(ref desiredMonitor,index); Post(new("monitor",Value:index));});
-        var profile=Choice(DesktopCapture.Profiles,0,index=>Post(new("profile",Value:index)));
+        initialQuality=Math.Clamp(initialQuality,0,DesktopCapture.Profiles.Length-1);
+        var profile=Choice(DesktopCapture.Profiles,initialQuality,index=>Post(new("profile",Value:index)));
+        if(initialQuality!=0) Post(new("profile",Value:initialQuality));
         var fullscreen=Brand.Style(new Button {Text="Full screen",AutoSize=true}); fullscreen.Click+=(_,_)=>ToggleFull();
         var disconnect=Brand.Style(new Button {Text="Disconnect",AutoSize=true},true); disconnect.Click+=(_,_)=>Close();
         status.Text=(control?"Connected • Control":"Connected • View only")+" • "+route;
@@ -52,6 +62,7 @@ public sealed class Viewer : Form
         if(control && openFiles!=null)
         {
             var strip=transfers=new TransferStrip(openFiles);
+            observeTransfers?.Invoke(strip);
             var send=Brand.Style(new Button {Text="Send files",AutoSize=true});
             send.Click+=async(_,_)=>
             {
@@ -62,10 +73,7 @@ public sealed class Viewer : Form
             var get=Brand.Style(new Button {Text="File transfer",AutoSize=true});
             get.Click+=(_,_)=>
             {
-                if(fileManager is {IsDisposed:false}) { fileManager.Activate(); return; }
-                fileManager=new FileManagerWindow(name,openFiles);
-                fileManager.FormClosed+=(_,_)=>fileManager=null;
-                fileManager.Show(this);
+                OpenFileManager();
             };
             bar.Controls.AddRange([send,get]);
             // Files dragged from Explorer onto the remote screen are sent like Send files.
@@ -123,12 +131,20 @@ public sealed class Viewer : Form
                 shownFrames=0; counter.Restart();
             }
         };
-        FormClosed+=(_,_)=> {closing=true; barTimer.Dispose(); transfers?.Cancel(); fileManager?.Close(); stop.Cancel(); Drop(); screen.Image?.Dispose(); screen.Image=null;};
+        FormClosed+=(_,_)=> {closing=true; barTimer.Dispose(); transfers?.Cancel(); fileManager?.Close(); stop.Cancel(); Drop(); screen.Image?.Dispose(); screen.Image=null; SessionStateChanged?.Invoke();};
         Shown+=async(_,_)=>
         {
             var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); Drop();
             try {await writing;} catch(OperationCanceledException) { }
         };
+    }
+    public void OpenFileManager()
+    {
+        if(!CanTransfer) return;
+        if(fileManager is {IsDisposed:false}) {fileManager.Activate(); return;}
+        fileManager=new FileManagerWindow(Text["HearthLink • ".Length..],filesFactory!,observeTransfer);
+        fileManager.FormClosed+=(_,_)=>fileManager=null;
+        fileManager.Show(this);
     }
     /// <summary>
     /// Closes the session connection on a pool thread. Closing a relay tunnel waits up to 3 s for the close handshake,
@@ -141,8 +157,10 @@ public sealed class Viewer : Form
     {
         if(IsDisposed || lost.Visible) return;
         status.Text="Disconnected"; lostText.Text=message;
+        sessionLost=true;
         PlaceLost(); lost.Visible=true; lost.BringToFront();
         transfers?.Cancel();
+        SessionStateChanged?.Invoke();
     }
     /// <summary>A toolbar button showing the current option ("Balanced ▾") that opens a menu of the options.</summary>
     Button Choice(string[] options,int selected,Action<int> chosen)

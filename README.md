@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.4.4 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.5.0 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.5.0 adds eight sidebar sections: **Your computers**, **Recent sessions**, **File transfers**, **Access & security**, **Connection health**, **Session history**, **Settings**, and **Help & updates**. Search and favorite paired PCs; reconnect from actual history; view or cancel live transfers from either viewer or file manager; search/export recent audit metadata; choose default control mode and image quality. Incoming-session and Windows Hello controls are now under Access & security; name and controller preferences are under Settings. The active-session shortcut returns to a viewer or the host's End session controls. Transfer records last for the current app run (up to 200 finished batches); recent/history pages read up to 1,000 records from the last 512 KiB of local history. Status unavailable is shown separately from Offline when a relay check fails. No protocol change; connects to 0.4.1–0.4.4. Startup/tray and theme preferences remain future work.
 
 Version 0.4.4 fixes the computer table's hover painting by drawing each status stripe, background and text cell together in DrawSubItem, avoiding the native hover-only DrawItem event. Includes clipped-cell and repeated-hover regression checks. Connects to 0.4.1–0.4.3. See the [app audit and improvement priorities](docs/APP-AUDIT-2026-10-30.md).
 

@@ -212,7 +212,7 @@ public sealed class FileManagerWindow : Form
     FilePane active;
     /// <summary>Starts the last copy again with more names left out, for the helper's "copy again without node_modules".</summary>
     Func<IReadOnlyCollection<string>,Task>? again;
-    public FileManagerWindow(string remoteName,Func<CancellationToken,Task<Connection>> openFiles)
+    public FileManagerWindow(string remoteName,Func<CancellationToken,Task<Connection>> openFiles,Action<TransferStrip>? observeTransfers=null)
     {
         Text="HearthLink • File transfer • "+remoteName; ClientSize=new(1240,760); MinimumSize=new(900,520); Icon=Brand.AppIcon; Font=new("Segoe UI",10); BackColor=Brand.Canvas; KeyPreview=true; StartPosition=FormStartPosition.CenterParent;
         remoteFiles=new RemoteFiles(openFiles,lifetime.Token);
@@ -220,6 +220,7 @@ public sealed class FileManagerWindow : Form
         remote=new FilePane("Remote • "+remoteName,remoteFiles);
         active=local;
         transfers=new TransferStrip(openFiles);
+        observeTransfers?.Invoke(transfers);
         transfers.Finished+=async()=> { await local.ReloadAll(); await remote.ReloadAll(); };
         assistant=new AssistantPanel(Describe,(answer,request)=>TransferAssistant.ReadPlan(answer,local.Entries,remote.Entries,request,Names(local)),Run,plan=>TransferAssistant.Explain(plan,local.Folder,remote.Folder));
         transfers.Started+=batch=>assistant.Watch(batch,again==null?null:Again);

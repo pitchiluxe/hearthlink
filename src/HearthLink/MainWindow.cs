@@ -2,7 +2,7 @@ using HearthLink.Core;
 using System.Security.Authentication;
 
 namespace HearthLink;
-public sealed class MainWindow : Form
+public sealed partial class MainWindow : Form
 {
     readonly IdentityStore identity;
     readonly PairingGate pairing=new();
@@ -45,29 +45,27 @@ public sealed class MainWindow : Form
         if(store==null) identity.RelayOverride=Environment.GetEnvironmentVariable("HEARTHLINK_RELAY_URL");
         updates=new(this,identity);
         VerifyPresence=reason=>WindowsHello.Verify(Handle,reason);
-        Text="HearthLink • Your computers"; Size=new(1096,783); FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+        Text="HearthLink • Your computers"; Size=new(1280,840); MinimumSize=new(1100,760);
         Font=new("Segoe UI",10); BackColor=Brand.Canvas; ForeColor=Brand.Ink; Icon=Brand.AppIcon;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};
-        root.ColumnStyles.Add(new(SizeType.Absolute,180)); root.ColumnStyles.Add(new(SizeType.Percent,100)); Controls.Add(root);
+        root.ColumnStyles.Add(new(SizeType.Absolute,210)); root.ColumnStyles.Add(new(SizeType.Percent,100)); Controls.Add(root);
         root.RowStyles.Add(new(SizeType.Percent,100));
         var sidebar=new Panel {Dock=DockStyle.Fill,BackColor=Brand.Navy,Margin=Padding.Empty,Padding=new(22,28,22,24)};
         var mark=new BrandMark {Location=new(22,28),Size=new(54,54)}; sidebar.Controls.Add(mark);
         sidebar.Controls.Add(new Label {Text="HearthLink",Location=new(22,100),Size=new(150,30),ForeColor=Color.White,Font=new("Segoe UI",17,FontStyle.Bold)});
         sidebar.Controls.Add(new Label {Text="A little closer to home.",Location=new(22,138),Size=new(144,48),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
-        sidebar.Controls.Add(new Label {Text="Your computers",Location=new(0,218),Size=new(180,46),Padding=new(22,12,0,0),BackColor=Color.FromArgb(36,57,90),ForeColor=Color.White,Font=new("Segoe UI",10,FontStyle.Bold)});
-        sidebar.Controls.Add(new Label {Text="Private connections\nAny network",Location=new(22,292),Size=new(143,70),ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9.5f)});
-        var sidebarFoot=new Label {Text="You approve access.\nYou stay in control.\n\nAttended test build 0.4.4\n\nCreated by Erick Omari",Dock=DockStyle.Bottom,Height=146,ForeColor=Color.FromArgb(173,193,221),Font=new("Segoe UI",9)}; sidebar.Controls.Add(sidebarFoot);
         root.Controls.Add(sidebar,0,0);
         var content=new TableLayoutPanel {Dock=DockStyle.Fill,RowCount=3,ColumnCount=1,Padding=new(28,24,28,18),Margin=Padding.Empty};
+        content.ColumnStyles.Add(new(SizeType.Percent,100));
         content.RowStyles.Add(new(SizeType.Absolute,86)); content.RowStyles.Add(new(SizeType.Percent,100)); content.RowStyles.Add(new(SizeType.Absolute,36)); root.Controls.Add(content,1,0);
         var heading=new Panel {Dock=DockStyle.Fill};
         heading.Controls.Add(new Label {Text="Your computers",Dock=DockStyle.Top,Height=42,Font=new("Segoe UI Variable Display",25,FontStyle.Bold),ForeColor=Brand.Ink});
         heading.Controls.Add(new Label {Text="A secure connection to the PCs you know.",Location=new(1,48),AutoSize=true,ForeColor=Brand.Muted}); content.Controls.Add(heading,0,0);
         var body=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=3,RowCount=1,Margin=Padding.Empty};
-        body.ColumnStyles.Add(new(SizeType.Percent,100)); body.ColumnStyles.Add(new(SizeType.Absolute,20)); body.ColumnStyles.Add(new(SizeType.Absolute,318)); content.Controls.Add(body,0,1);
+        body.ColumnStyles.Add(new(SizeType.Percent,100)); body.ColumnStyles.Add(new(SizeType.Absolute,20)); body.ColumnStyles.Add(new(SizeType.Absolute,290)); content.Controls.Add(body,0,1);
         body.RowStyles.Add(new(SizeType.Percent,100));
         var workspace=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=1,RowCount=3,Margin=Padding.Empty};
-        workspace.RowStyles.Add(new(SizeType.Percent,100)); workspace.RowStyles.Add(new(SizeType.Absolute,18)); workspace.RowStyles.Add(new(SizeType.Absolute,205)); body.Controls.Add(workspace,0,0);
+        workspace.RowStyles.Add(new(SizeType.Percent,100)); workspace.RowStyles.Add(new(SizeType.Absolute,0)); workspace.RowStyles.Add(new(SizeType.Absolute,0)); body.Controls.Add(workspace,0,0);
         var devices=new Surface {Dock=DockStyle.Fill,Margin=Padding.Empty}; workspace.Controls.Add(devices,0,0);
         var deviceHeading=new Panel {Dock=DockStyle.Fill};
         deviceHeading.Controls.Add(Title("Paired computers",16)); deviceCount.Location=new(0,32); deviceHeading.Controls.Add(deviceCount);
@@ -76,7 +74,11 @@ public sealed class MainWindow : Form
         hosts.Dock=DockStyle.Fill; hosts.BorderStyle=BorderStyle.None; hosts.BackColor=Color.White; hosts.ForeColor=Brand.Ink; hosts.HideSelection=false;
         hosts.Columns.Add("Computer",160); hosts.Columns.Add("Address",145); hosts.Columns.Add("Status",120); hosts.Columns.Add("Last seen",155);
         StyleDeviceList();
-        var well=new Panel {Dock=DockStyle.Fill}; well.Controls.Add(hosts); well.Controls.Add(emptyDevices);
+        var well=new Panel {Dock=DockStyle.Fill}; well.Controls.Add(hosts); well.Controls.Add(emptyDevices); well.Controls.Add(noMatches);
+        computerSearch.TextChanged+=(_,_)=>PopulateHosts(); favoritesOnly.CheckedChanged+=(_,_)=>PopulateHosts();
+        var searchRow=new TableLayoutPanel {ColumnCount=2,Dock=DockStyle.Fill,Margin=Padding.Empty};
+        searchRow.ColumnStyles.Add(new(SizeType.Percent,100)); searchRow.ColumnStyles.Add(new(SizeType.Absolute,110));
+        searchRow.Controls.Add(computerSearch,0,0); searchRow.Controls.Add(favoritesOnly,1,0);
         address.PlaceholderText="Pairing code (1234-5678-9012) or LAN address"; address.Text=identity.Config.LastTarget; address.Dock=DockStyle.Fill; Brand.StyleInput(address);
         var pairRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,Padding=new(0,2,0,4),Margin=Padding.Empty};
         pairRow.RowCount=1; pairRow.RowStyles.Add(new(SizeType.Percent,100));
@@ -85,8 +87,8 @@ public sealed class MainWindow : Form
         address.KeyDown+=(_,e)=> {if(e.KeyCode==Keys.Enter) {e.SuppressKeyPress=true; pairButton.PerformClick();}};
         control.Text="Keyboard & mouse"; control.UseMnemonic=false; control.ForeColor=Brand.Ink; control.Margin=new(0,10,12,0);
         var connect=AsyncAction("Connect",ConnectHost); Brand.Style(connect,true);
-        var forget=Action("Remove PC",()=> { if(hosts.SelectedIndices.Count>0) RemovePc(identity.Config.Hosts[hosts.SelectedIndices[0]].Fingerprint); });
-        devices.Controls.Add(Stack((deviceHeading,64),(well,-1),(connectionProgress,26),(pairRow,42),(Row(control,connect,forget),44)));
+        var forget=Action("Remove PC",()=> { if(SelectedPeer() is {} peer) RemovePc(peer.Fingerprint); });
+        devices.Controls.Add(Stack((deviceHeading,64),(searchRow,40),(well,-1),(connectionProgress,32),(pairRow,42),(Row(control,connect),44),(Row(Action("Favorite / unfavorite",ToggleFavorite),forget),44)));
         var access=new Surface {Dock=DockStyle.Fill,Margin=Padding.Empty}; workspace.Controls.Add(access,0,2);
         controllers.Dock=DockStyle.Fill; controllers.BorderStyle=BorderStyle.None; controllers.BackColor=Color.White; controllers.ForeColor=Brand.Ink; controllers.HorizontalScrollbar=true;
         controllers.DrawMode=DrawMode.OwnerDrawFixed; controllers.ItemHeight=42;
@@ -102,7 +104,7 @@ public sealed class MainWindow : Form
         Local(Title("This computer",16),42);
         var name=new TextBox {Text=identity.Config.Name,MaxLength=64,Dock=DockStyle.Fill}; Brand.StyleInput(name);
         var nameRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty}; nameRow.RowStyles.Add(new(SizeType.Percent,100)); nameRow.ColumnStyles.Add(new(SizeType.Percent,100)); nameRow.ColumnStyles.Add(new(SizeType.Absolute,72)); nameRow.Controls.Add(name,0,0);
-        var save=Action("Save",()=> { identity.Config.Name=name.Text.Trim().Length>0?name.Text.Trim():Environment.MachineName; identity.Save(); }); save.AutoSize=false; save.Padding=new(4); save.Dock=DockStyle.Fill; save.Margin=new(8,0,0,6); nameRow.Controls.Add(save,1,0); Local(nameRow,42);
+        var save=Action("Save",()=> { identity.Config.Name=name.Text.Trim().Length>0?name.Text.Trim():Environment.MachineName; identity.Save(); }); save.AutoSize=false; save.Padding=new(4); save.Dock=DockStyle.Fill; save.Margin=new(8,0,0,6); nameRow.Controls.Add(save,1,0);
         hostEnabled.Text="Allow incoming sessions"; controllerEnabled.Text="Use as a controller";
         hostEnabled.Checked=identity.Config.Host; controllerEnabled.Checked=identity.Config.Controller;
         lanListener.Checked=identity.Config.LanListener;
@@ -111,8 +113,8 @@ public sealed class MainWindow : Form
         hostEnabled.CheckedChanged+=(_,_)=> { identity.Config.Host=hostEnabled.Checked; identity.Save(); ConfigureHost(); };
         lanListener.CheckedChanged+=(_,_)=> { identity.Config.LanListener=lanListener.Checked; identity.Save(); ConfigureHost(); };
         controllerEnabled.CheckedChanged+=(_,_)=> { identity.Config.Controller=controllerEnabled.Checked; identity.Save(); };
-        Local(hostEnabled,34); Local(lanListener,48); Local(unattended,48); Local(controllerEnabled,34);
         hostStatus.AutoSize=false; hostStatus.Font=new("Segoe UI",9); hostStatus.Padding=new(10); hostStatus.BackColor=Color.FromArgb(239,245,253); hostStatus.ForeColor=Brand.Muted; Local(hostStatus,62);
+        Local(Action("Access & security",()=>Navigate("Access & security")),40);
         Local(Action("End remote session",()=>server?.Disconnect()),40); Local(new Panel(),16);
         Local(Action("App updates",updates.Show),40); Local(new Panel(),12);
         Local(Title("Pair with this PC",13),32);
@@ -123,8 +125,10 @@ public sealed class MainWindow : Form
         Local(new Label {Text="Compare every digit on both PCs before approving a pairing request.",ForeColor=Brand.Muted,Font=new("Segoe UI",9)},50);
         Local(hostingNote,90);
         content.Controls.Add(new Label {Text="Encrypted end to end  •  You approve access  •  Works on any network",Dock=DockStyle.Fill,TextAlign=ContentAlignment.BottomLeft,ForeColor=Brand.Muted,Font=new("Segoe UI",9)},0,2);
+        control.Checked=identity.Config.DefaultControl;
+        BuildNavigation(root,sidebar,content,access,nameRow);
         PopulateHosts(); PopulateControllers(); ShowAccessMode();
-        Shown+=async(_,_)=> { ConfigureHost(); await RefreshHosts(); poll.Start(); if(store==null) updates.Start(); };
+        Shown+=async(_,_)=> { ConfigureHost(); await RefreshHosts(); if(navigationLifetime.IsCancellationRequested) return; poll.Start(); if(store==null) updates.Start(); };
         poll.Tick+=async(_,_)=>await RefreshHosts();
         pairingExpiry.Tick+=(_,_)=>ClosePairing("Pairing is closed");
         FormClosing+=(_,_)=> { poll.Stop(); pairingExpiry.Stop(); updates.Dispose(); presence?.Dispose(); server?.Dispose(); notice?.CloseAfterSession(); notice=null; sessionTray.Visible=false; sessionTray.Dispose(); };
@@ -139,17 +143,15 @@ public sealed class MainWindow : Form
         for(int i=0;i<items.Length;i++) { stack.RowStyles.Add(items[i].Height<0?new(SizeType.Percent,100):new(SizeType.Absolute,items[i].Height)); items[i].Item.Dock=DockStyle.Fill; items[i].Item.Margin=Padding.Empty; stack.Controls.Add(items[i].Item,0,i); } return stack;
     }
     static FlowLayoutPanel Row(params Control[] controls) { var row=new FlowLayoutPanel {Dock=DockStyle.Fill,WrapContents=false,Padding=new(0,3,0,0),Margin=Padding.Empty}; row.Controls.AddRange(controls); return row; }
-    static Button Action(string label,System.Action action) { var b=Brand.Style(new Button {Text=label,AutoSize=true}); b.Click+=(_,_)=>action(); return b; }
+    static Button Action(string label,System.Action action) { var b=Brand.Style(new Button {Text=label,UseMnemonic=false,AutoSize=true}); b.Click+=(_,_)=>action(); return b; }
     void OpenHistory()
     {
-        string file=Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),"HearthLink","history.jsonl");
-        if(!File.Exists(file)) { MessageBox.Show(this,"No session history yet. Connection attempts will appear here.","HearthLink"); return; }
-        System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("notepad.exe",file) {UseShellExecute=true});
+        Navigate("Session history");
     }
     void StyleDeviceList()
     {
         hosts.OwnerDraw=true;
-        hosts.DrawColumnHeader+=(_,e)=> { using var brush=new SolidBrush(Color.FromArgb(246,248,252)); e.Graphics.FillRectangle(brush,e.Bounds); TextRenderer.DrawText(e.Graphics,e.Header?.Text??"",new Font("Segoe UI",9),new Rectangle(e.Bounds.X+8,e.Bounds.Y,e.Bounds.Width-8,e.Bounds.Height),Brand.Muted,TextFormatFlags.VerticalCenter); };
+        hosts.DrawColumnHeader+=(_,e)=> { using var brush=new SolidBrush(Color.FromArgb(246,248,252)); using var font=new Font("Segoe UI",9); e.Graphics.FillRectangle(brush,e.Bounds); TextRenderer.DrawText(e.Graphics,e.Header?.Text??"",font,new Rectangle(e.Bounds.X+8,e.Bounds.Y,e.Bounds.Width-8,e.Bounds.Height),Brand.Muted,TextFormatFlags.VerticalCenter); };
         // Taller rows are easier to read and click; a ListView takes its row height from its image list.
         hosts.SmallImageList=new ImageList {ImageSize=new(1,30)};
         // DrawItem also fires on hover without cell events (a Win32 ListView quirk).
@@ -201,12 +203,12 @@ public sealed class MainWindow : Form
     }
     static (Color Stripe,Color Wash,Color Selected,Color Text) Tint(string status)=>
         status.StartsWith("Online",StringComparison.Ordinal) ? (Color.FromArgb(22,163,74),Color.FromArgb(236,249,241),Color.FromArgb(209,240,221),Color.FromArgb(21,128,61)) :
-        status=="Not checked" ? (Color.FromArgb(203,213,225),Color.White,Color.FromArgb(235,242,255),Brand.Muted) :
+        status is "Not checked" or "Status unavailable" ? (Color.FromArgb(203,213,225),Color.White,Color.FromArgb(235,242,255),Brand.Muted) :
         (Color.FromArgb(220,38,38),Color.FromArgb(254,240,240),Color.FromArgb(252,218,218),Color.FromArgb(185,28,28));
     Button AsyncAction(string label,Func<Task> action)
     {
         var b=Brand.Style(new Button {Text=label,AutoSize=true});
-        b.Click+=async(_,_)=> { b.Enabled=false; try { await action(); } catch(Exception e) { connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning); } finally { if(!b.IsDisposed) b.Enabled=true; } }; return b;
+        b.Click+=async(_,_)=> { b.Enabled=false; try { await action(); } catch(Exception e) { if(!navigationLifetime.IsCancellationRequested) {connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning);} } finally { if(!b.IsDisposed) b.Enabled=true; } }; return b;
     }
     static string Explain(Exception e)=>e is AuthenticationException ? "Host identity could not be verified. If the host was reinstalled, compare its new fingerprint in person before removing and pairing again." : e.Message;
     public Task<T> OnUi<T>(Func<T> action)
@@ -228,6 +230,7 @@ public sealed class MainWindow : Form
         notice?.CloseAfterSession(); notice=new(controller,allowControl,endSession); notice.Show(this);
         sessionTray.Text="HearthLink • remote session active"; sessionTray.Visible=true;
         sessionTray.ShowBalloonTip(5000,unattendedSession?"HearthLink • connected without approval (unattended)":"HearthLink • computer connected",SessionNoticeText.Message(controller,allowControl),unattendedSession?ToolTipIcon.Warning:ToolTipIcon.Info);
+        RefreshSessionShortcut();
     }
     public void SessionEnded()
     {
@@ -235,6 +238,7 @@ public sealed class MainWindow : Form
         notice?.CloseAfterSession(); notice=null; sessionTray.Visible=false;
         hostStatus.BackColor=Color.FromArgb(239,245,253); hostStatus.ForeColor=Brand.Muted;
         ShowHostReady();
+        RefreshSessionShortcut();
     }
     void ShowHostReady()
     {
@@ -344,9 +348,23 @@ public sealed class MainWindow : Form
     void PopulateControllers() { controllers.Items.Clear(); foreach(var entry in identity.Config.Controllers.Entries) controllers.Items.Add(new ControllerItem(PeerName.Clean(entry.Value),entry.Key)); emptyControllers.Visible=controllers.Items.Count==0; controllers.Visible=controllers.Items.Count>0; }
     void PopulateHosts()
     {
-        hosts.Items.Clear(); foreach(var host in identity.Config.Hosts) hosts.Items.Add(new ListViewItem([PeerName.Clean(host.Name),host.Address.Length>0?host.Address:"Relay only","Not checked",Seen(host.LastSeen)]));
-        emptyDevices.Visible=hosts.Items.Count==0; hosts.Visible=hosts.Items.Count>0;
-        deviceCount.Text=hosts.Items.Count==1?"1 approved computer":$"{hosts.Items.Count} approved computers";
+        string? selected=SelectedPeer()?.Fingerprint;
+        hosts.BeginUpdate();
+        try
+        {
+            hosts.Items.Clear();
+            foreach(var peer in VisiblePeers())
+            {
+                string label=(IsFavorite(peer.Fingerprint)?"★  ":"")+PeerName.Clean(peer.Name);
+                var item=new ListViewItem([label,peer.Address.Length>0?peer.Address:"Relay only",peerStates.GetValueOrDefault(peer.Fingerprint,"Not checked"),Seen(peer.LastSeen)]) {Tag=peer.Fingerprint};
+                hosts.Items.Add(item); item.Selected=peer.Fingerprint==selected;
+            }
+        }
+        finally {hosts.EndUpdate();}
+        emptyDevices.Visible=identity.Config.Hosts.Count==0;
+        noMatches.Visible=identity.Config.Hosts.Count>0 && hosts.Items.Count==0;
+        hosts.Visible=hosts.Items.Count>0;
+        UpdateDeviceCount();
         FitHostColumns();
     }
     async Task PairHost()
@@ -360,8 +378,7 @@ public sealed class MainWindow : Form
         int existing=identity.Config.Hosts.FindIndex(p=>p.Address.Equals(target,StringComparison.OrdinalIgnoreCase));
         if(existing>=0)
         {
-            foreach(ListViewItem item in hosts.Items) item.Selected=false;
-            hosts.Items[existing].Selected=true; hosts.Items[existing].EnsureVisible();
+            SelectPeer(identity.Config.Hosts[existing].Fingerprint);
             connectionProgress.Text="Using saved identity • requesting connection";
             await ConnectHost(); return;
         }
@@ -389,34 +406,37 @@ public sealed class MainWindow : Form
     async Task Paired(string fingerprint)
     {
         TrustChanged();
-        int paired=identity.Config.Hosts.FindIndex(p=>p.Fingerprint==fingerprint);
-        foreach(ListViewItem item in hosts.Items) item.Selected=false;
-        hosts.Items[paired].Selected=true; hosts.Items[paired].EnsureVisible();
+        SelectPeer(fingerprint);
         connectionProgress.Text="Paired • requesting session approval"; await ConnectHost();
     }
     async Task ConnectHost()
     {
         if(!identity.Config.Controller) throw new InvalidOperationException("Enable controller first.");
-        if(hosts.SelectedIndices.Count==0) throw new InvalidOperationException("Select a trusted host first.");
-        await ConnectTo(identity.Config.Hosts[hosts.SelectedIndices[0]].Fingerprint,control.Checked);
+        var peer=SelectedPeer() ?? throw new InvalidOperationException("Select a trusted host first.");
+        await ConnectTo(peer.Fingerprint,control.Checked);
     }
     /// <summary>Opens a viewer on the paired host <paramref name="fingerprint"/>; the viewer's Reconnect button comes back here.</summary>
     async Task ConnectTo(string fingerprint,bool allowControl)
     {
+        navigationLifetime.Token.ThrowIfCancellationRequested();
+        if(!identity.Config.Controller) throw new InvalidOperationException("Enable controller first in Settings.");
         var host=identity.Config.Hosts.Find(p=>p.Fingerprint==fingerprint) ?? throw new InvalidOperationException("That computer is no longer paired.");
         string name=PeerName.Clean(host.Name);
         connectionProgress.Text="Connecting to "+name+"…";
         Connection? connection=null;
         try
         {
-            (connection,bool direct)=await Reach(host,name);
+            (connection,bool direct)=await Reach(host,name,navigationLifetime.Token);
             string route=direct?"direct":"relay";
             connectionProgress.Text="Waiting for session approval on "+name+" • "+route;
-            await connection.Send(new("session",Control:allowControl,Value:Wire.ProtocolVersion));
-            using var timeout=new CancellationTokenSource(TimeSpan.FromMinutes(2));
+            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(navigationLifetime.Token); timeout.CancelAfter(TimeSpan.FromMinutes(2));
+            await connection.Send(new("session",Control:allowControl,Value:Wire.ProtocolVersion),timeout.Token);
             var reply=await connection.Read(timeout.Token);
             if(reply.Kind!="ready") throw new InvalidOperationException(reply.Text??"Host rejected the session.");
             if(reply.Value!=Wire.ProtocolVersion) throw new InvalidOperationException("Update HearthLink on BOTH PCs to the latest version. Existing pairing is preserved.");
+            navigationLifetime.Token.ThrowIfCancellationRequested();
+            if(!identity.Config.Controller) throw new InvalidOperationException("Controller was disabled while waiting for approval.");
+            if(!identity.Config.Hosts.Any(peer=>peer.Fingerprint==fingerprint)) throw new InvalidOperationException("That computer is no longer paired.");
             connectionProgress.Text="Connected to "+name;
             identity.Audit(host.Fingerprint,"outbound-connected");
             if(identity.UpgradeTrust(host.Fingerprint,null)) TrustChanged();
@@ -430,9 +450,14 @@ public sealed class MainWindow : Form
             Func<Task> reconnect=async()=>
             {
                 try { await ConnectTo(fingerprint,allowControl); }
-                catch(Exception e) { connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning); }
+                catch(Exception e) { if(!navigationLifetime.IsCancellationRequested) {connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning);} }
             };
-            new Viewer(connection,name,allowControl,reply.Monitors??["Display 1"],route,openFiles,reconnect).Show(this); connection=null;
+            var viewer=new Viewer(connection,name,allowControl,reply.Monitors??["Display 1"],route,openFiles,reconnect,
+                strip=>ObserveTransfer(strip,name),Math.Clamp(identity.Config.DefaultQuality,0,DesktopCapture.Profiles.Length-1));
+            viewer.FormClosed+=(_,_)=>RefreshSessionShortcut();
+            viewer.SessionStateChanged+=RefreshSessionShortcut;
+            viewer.Show(this); connection=null;
+            RefreshSessionShortcut();
         }
         finally { connection?.Dispose(); }
     }
@@ -440,17 +465,25 @@ public sealed class MainWindow : Form
     /// Tries the relay and the saved LAN address at once and keeps the first pinned connection, so PCs on the same network
     /// get the direct path's lower latency. The other attempt is closed when it finishes.
     /// </summary>
-    async Task<(Connection Connection,bool Direct)> Reach(Peer host,string name)
+    async Task<(Connection Connection,bool Direct)> Reach(Peer host,string name,CancellationToken token=default)
     {
-        var relay=RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,CancellationToken.None);
+        var relay=RelayClient.ConnectHost(identity.RelayUrl,identity,host.Fingerprint,token);
         Task<Connection>? lan=host.Address.Length>0?Connection.Connect(host.Address,identity,host.Fingerprint):null;
         var running=new List<Task<Connection>> {relay}; if(lan!=null) running.Add(lan);
-        while(running.Count>0)
+        Connection? chosen=null;
+        try
         {
-            var done=await Task.WhenAny(running); running.Remove(done);
-            if(!done.IsCompletedSuccessfully) continue;
-            foreach(var other in running) _=other.ContinueWith(t=> { if(t.IsCompletedSuccessfully) t.Result.Dispose(); else _=t.Exception; },TaskScheduler.Default);
-            return (done.Result,done==lan);
+            while(running.Count>0)
+            {
+                var done=await Task.WhenAny(running).WaitAsync(token); running.Remove(done);
+                if(!done.IsCompletedSuccessfully) continue;
+                chosen=done.Result; return (chosen,done==lan);
+            }
+        }
+        finally
+        {
+            foreach(var attempt in new[]{relay,lan}.OfType<Task<Connection>>())
+                _=attempt.ContinueWith(t=> {if(t.IsCompletedSuccessfully) {if(!ReferenceEquals(t.Result,chosen)) t.Result.Dispose();} else _=t.Exception;},TaskScheduler.Default);
         }
         var relayFailure=relay.Exception!.InnerException!;
         // Anything but "unreachable" or "offline" (not paired, no answer, wrong identity) is the real answer.
@@ -467,12 +500,15 @@ public sealed class MainWindow : Form
         try
         {
             var all=identity.Config.Hosts.ToArray();
-            HashSet<string> relayed=[];
-            try { using var limit=new CancellationTokenSource(TimeSpan.FromSeconds(10)); relayed=await RelayClient.Online(identity.RelayUrl,identity,all.Select(p=>p.Fingerprint),limit.Token); }
-            catch(Exception e) when(e is RelayException or ArgumentException or OperationCanceledException or IOException) { /* LAN probes below still run */ }
+            HashSet<string> relayed=[]; bool relayOk=true;
+            try { using var limit=CancellationTokenSource.CreateLinkedTokenSource(navigationLifetime.Token); limit.CancelAfter(TimeSpan.FromSeconds(10)); relayed=await RelayClient.Online(identity.RelayUrl,identity,all.Select(p=>p.Fingerprint),limit.Token); }
+            catch(Exception e) when(e is RelayException or ArgumentException or OperationCanceledException or IOException) { relayOk=false; }
+            if(navigationLifetime.IsCancellationRequested) return;
+            relayCheck=all.Length==0?"No paired computers to check":relayOk?"Relay status check succeeded":"Relay status unavailable — check internet access";
+            if(relayOk && all.Length>0) lastSuccessfulCheck=DateTimeOffset.Now;
             foreach(var host in all)
             {
-                string state="Offline"; DateTimeOffset? seen=host.LastSeen;
+                string state=relayOk?"Offline":"Status unavailable"; DateTimeOffset? seen=host.LastSeen;
                 if(relayed.Contains(host.Fingerprint)) { state="Online"; seen=DateTimeOffset.UtcNow; }
                 else if(host.Address.Length>0)
                 {
@@ -488,17 +524,20 @@ public sealed class MainWindow : Form
                     catch(Exception e) when(e is IOException or System.Net.Sockets.SocketException or OperationCanceledException) { }
                 }
                 int index=identity.Config.Hosts.FindIndex(p=>p.Fingerprint==host.Fingerprint && p.Address==host.Address);
+                if(navigationLifetime.IsCancellationRequested) return;
                 if(index<0) continue;
                 identity.Config.Hosts[index]=host with {LastSeen=seen};
-                if(index<hosts.Items.Count) { hosts.Items[index].SubItems[2].Text=state; hosts.Items[index].SubItems[3].Text=Seen(seen); }
+                peerStates[host.Fingerprint]=state;
+                var row=hosts.Items.Cast<ListViewItem>().FirstOrDefault(item=>Equals(item.Tag,host.Fingerprint));
+                if(row!=null) { row.SubItems[2].Text=state; row.SubItems[3].Text=Seen(seen); }
             }
             identity.Save();
             hosts.Invalidate();
-            int online=hosts.Items.Cast<ListViewItem>().Count(i=>i.SubItems[2].Text.StartsWith("Online",StringComparison.Ordinal));
-            deviceCount.Text=$"{(hosts.Items.Count==1?"1 approved computer":$"{hosts.Items.Count} approved computers")} • {online} online • {hosts.Items.Count-online} offline";
+            UpdateDeviceCount(); RefreshHealth();
             // Repopulating hosts here would wipe the statuses just shown.
             if(identity.Config.Controllers.Entries.Count!=trusted) { PopulateControllers(); _=presence?.PublishAllowed(); }
         }
+        catch(Exception e) when(e is IOException or UnauthorizedAccessException) { connectionProgress.Text="Could not save status. Check free disk space and folder access."; }
         finally { polling=false; }
     }
     string? Prompt(string label)
