@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.6.0 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.6.1 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.6.1 fixes **Scan installed models** failing when one Ollama entry has missing/unreadable model data. Healthy verified models remain available; broken/timed-out entries are listed with repair guidance. The scan uses up to three metadata checks concurrently, per-model timeouts, progress and Cancel. A stopped local Ollama service now produces a start/retry instruction instead of advice about cloud credentials or internet. No models are deleted, downloaded or changed. [Hotfix details](docs/UPDATE-0.6.1.md).
 
 Version 0.6.0 adds **Settings → AI providers & performance**: Ollama is primary; OpenAI and then Claude are optional fallbacks, disabled until you enable and save cloud fallback. API keys stay in Windows-protected settings and masked fields. Scan verified installed models or the current official Ollama Library; hosted-only/embedding catalog entries are excluded, and no models download automatically. The local background agent uses numeric timings only to reduce image quality one step during sustained congestion, within your saved limits; it never changes security or files, never uses cloud fallback, and pauses after a manual quality choice. Hardware, model availability and inference cost can affect results; this is not a performance guarantee. The main app is restored to its fixed 1096×783 size, with resizing/maximize disabled. See [0.6.0 details and validation](docs/UPDATE-0.6.0.md).
 

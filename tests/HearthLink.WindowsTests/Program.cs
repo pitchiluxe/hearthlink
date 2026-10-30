@@ -151,6 +151,7 @@ try
         await DeviceListChecks.Run(fixture.Window,Check);
         await PendingTrustChecks.Run(fixture.Window,host,controller,Check);
         await NavigationChecks.Run(fixture.Window,Check);
+        await ModelScanUiChecks.Run(fixture.Window,Check);
         if(args.Contains("--navigation-only")) {Console.WriteLine($"{passed} focused Windows checks passed."); return;}
         await UpdateUiChecks.Run(fixture.Window,host,Check);
         Check(DesktopCapture.Profile(2)==(8192,8192,75,30) && DesktopCapture.Profile(3)==(8192,8192,85,30) && DesktopCapture.Profile(4)==(8192,8192,95,30) && DesktopCapture.Profiles.SequenceEqual(["Responsive","Balanced","Full detail","Sharp","Best"]),"Sharp and Best profiles send full resolution at quality 85 and 95");

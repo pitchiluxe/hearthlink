@@ -8,8 +8,8 @@ static class UnattendedChecks
     public static async Task Run(MainWindow window,HostServer server,IdentityStore host,IdentityStore controller,IdentityStore stranger,string root,Action<bool,string> check)
     {
         uint uiThread=await window.OnUi(NativeDialogs.CurrentThread);
-        string history=Path.Combine(root,"host","history.jsonl");
-        int Count(string outcome)=>File.Exists(history)?File.ReadLines(history).Count(l=>l.Contains($"\"outcome\":\"{outcome}\"")):0;
+        // The real host appends audit events concurrently; use its shared-read snapshot reader.
+        int Count(string outcome)=>host.ReadHistory().Count(entry=>entry.Outcome==outcome);
         bool Saved()=>new IdentityStore(Path.Combine(root,"host")).Config.Unattended;
         var asked=new List<string>(); PresenceCheck answer=new(false);
         await window.OnUi(()=> { window.VerifyPresence=reason=> { asked.Add(reason); return Task.FromResult(answer); }; return true; });

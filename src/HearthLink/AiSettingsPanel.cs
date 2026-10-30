@@ -17,6 +17,10 @@ public sealed class AiSettingsPanel : UserControl
     readonly ComboBox maximum=new() {DropDownStyle=ComboBoxStyle.DropDownList,Width=180};
     readonly Label state=TextNote("Ollama is primary. Cloud requests stay off until you enable and save fallback.");
     readonly Label modelState=TextNote("Scan installed models to verify local chat capability. No model downloads run automatically.");
+    readonly TextBox scanDetails=new() {Name="OllamaScanDetails",Multiline=true,ReadOnly=true,ScrollBars=ScrollBars.Vertical,Dock=DockStyle.Fill,Text="Models that cannot be verified will be listed here. A failed model will not block healthy models."};
+    readonly Button cancelScan=Brand.Style(new Button {Text="Cancel scan",Enabled=false,AutoSize=true});
+    CancellationTokenSource? scanStop;
+    bool scanningModels;
     readonly DataGridView catalog=new() {Dock=DockStyle.Fill,ReadOnly=true,AllowUserToAddRows=false,AllowUserToDeleteRows=false,
         RowHeadersVisible=false,MultiSelect=false,SelectionMode=DataGridViewSelectionMode.FullRowSelect,AutoSizeColumnsMode=DataGridViewAutoSizeColumnsMode.Fill,BackgroundColor=Color.White,BorderStyle=BorderStyle.FixedSingle};
     readonly TextBox search=new() {PlaceholderText="Filter discovered models",Dock=DockStyle.Fill};
@@ -34,8 +38,9 @@ public sealed class AiSettingsPanel : UserControl
         minimum.SelectedIndex=Math.Clamp(settings.MinimumQuality,0,4); maximum.SelectedIndex=Math.Clamp(settings.MaximumQuality,minimum.SelectedIndex,4);
         catalog.Columns.Add("Name","Model"); catalog.Columns.Add("Variants","Local sizes"); catalog.Columns.Add("Updated","Updated");
         search.TextChanged+=(_,_)=>ShowCatalog();
+        cancelScan.Click+=(_,_)=>scanStop?.Cancel();
         var rows=new (Control Control,int Height)[] {
-            (Heading("Ollama · primary"),38),(installed,34),(Buttons(Button("Scan installed models",ScanInstalled),Button("Ollama setup",()=>Open("https://ollama.com/download"))),44),(modelState,54),
+            (Heading("Ollama · primary"),38),(installed,34),(Buttons(Button("Scan installed models",ScanInstalled),cancelScan,Button("Ollama setup",()=>Open("https://ollama.com/download"))),44),(modelState,54),(scanDetails,92),
             (Heading("Cloud fallback · optional"),38),(cloud,36),
             (TextNote("When enabled, file-helper prompts, conversation and folder/path metadata may be sent to OpenAI or Claude. File contents and screenshots are not sent. APIs may charge separately."),70),
             (TextNote("OpenAI API key (stored with Windows user protection)"),30),(openKey,34),(openModel,34),
@@ -95,14 +100,30 @@ public sealed class AiSettingsPanel : UserControl
     }
     async Task ScanInstalled()
     {
-        modelState.Text="Verifying installed Ollama chat models…";
-        using var timeout=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); timeout.CancelAfter(TimeSpan.FromSeconds(30));
-        var models=await runtime.Local.Models(timeout.Token); if(IsDisposed) return;
-        string selected=installed.SelectedIndex<=0?"":installed.Text;
-        installed.Items.Clear(); installed.Items.Add("Automatic (local chat models)");
-        foreach(var model in models.OrderByDescending(m=>m.Modified)) installed.Items.Add(model.Name);
-        installed.SelectedItem=selected; if(installed.SelectedIndex<0) installed.SelectedIndex=0;
-        modelState.Text=$"{models.Count} verified local chat models. Choose one and Save AI settings. Cloud-backed Ollama models are not used.";
+        using var stop=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        scanStop=stop; scanningModels=true; cancelScan.Enabled=true;
+        modelState.Text="Reading installed models from Ollama…"; state.Text="Local model scan in progress. No cloud credentials or internet are required.";
+        try
+        {
+            var progress=new Progress<OllamaScanProgress>(p=>
+            {if(!IsDisposed && scanningModels && scanStop==stop) modelState.Text=$"Checked {p.Checked} of {p.Total}: {p.Model}";});
+            var result=await runtime.Local.ScanModels(stop.Token,progress); if(IsDisposed) return;
+            string selected=installed.SelectedIndex<=0?"":installed.Text;
+            installed.Items.Clear(); installed.Items.Add("Automatic (local chat models)");
+            foreach(var model in result.Models.OrderByDescending(m=>m.Modified)) installed.Items.Add(model.Name);
+            installed.SelectedItem=selected; if(installed.SelectedIndex<0) installed.SelectedIndex=0;
+            modelState.Text=$"{result.Models.Count} verified local chat models; {result.Issues.Count} could not be checked. "+(result.Partial?"Partial scan; retry for unchecked models.":"Choose one and Save AI settings.");
+            scanDetails.Text=result.Issues.Count==0?"No unreadable models found. Cloud and non-chat models are excluded.":
+                string.Join(Environment.NewLine+Environment.NewLine,result.Issues.Select(issue=>issue.Model+": "+issue.Reason));
+            state.Text=result.Issues.Count>0?"Scan finished with warnings. Healthy models are available; see the model details above for entries needing repair.":
+                result.Models.Count==0?"Ollama is responding, but no verified local chat models were found. Install a local chat model in Ollama, then retry.":"Local model scan complete. No models were downloaded or changed.";
+        }
+        catch(OperationCanceledException) {if(!IsDisposed) {modelState.Text="Scan cancelled. The previous model list was kept."; state.Text=modelState.Text;}}
+        catch(HttpRequestException) {if(!IsDisposed) {modelState.Text="Ollama is not responding on this PC. Start the Ollama app, then retry."; state.Text="Cannot reach local Ollama. This scan does not need API keys or internet access.";}}
+        catch(AiUnavailableException) {if(!IsDisposed) {modelState.Text="Ollama's model list is unavailable or timed out. Restart Ollama, then retry."; state.Text=modelState.Text;}}
+        catch(Exception e) when(e is InvalidDataException or InvalidOperationException or System.Text.Json.JsonException)
+        {if(!IsDisposed) {modelState.Text="Ollama returned an unreadable model list. Check or update Ollama, then retry."; state.Text=modelState.Text;}}
+        finally {scanningModels=false; scanStop=null; if(!cancelScan.IsDisposed) cancelScan.Enabled=false;}
     }
     async Task LoadCloud(bool anthropic)
     {

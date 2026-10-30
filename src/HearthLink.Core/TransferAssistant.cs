@@ -6,6 +6,9 @@ namespace HearthLink.Core;
 
 /// <summary>A model installed in the local Ollama: its name, download size and what it can do ("completion", "tools"…).</summary>
 public sealed record AiModel(string Name,long Size,IReadOnlyList<string> Capabilities,bool Cloud,DateTimeOffset? Modified=null);
+public sealed record OllamaScanIssue(string Model,string Reason);
+public sealed record OllamaScanProgress(int Checked,int Total,string Model);
+public sealed record OllamaScanResult(IReadOnlyList<AiModel> Models,IReadOnlyList<OllamaScanIssue> Issues,int Checked,int Total,bool Partial);
 /// <summary>One message of a chat with the model ("system", "user" or "assistant").</summary>
 public sealed record AiMessage(string Role,string Content);
 /// <summary>
@@ -27,21 +30,57 @@ public sealed class Ollama(HttpClient client)
     /// <summary>The installed models that can chat and run on this PC.</summary>
     public async Task<IReadOnlyList<AiModel>> Models(CancellationToken token)
     {
-        var root=JsonNode.Parse(await Send(HttpMethod.Get,"api/tags",null,token));
-        var models=new List<AiModel>();
-        foreach(var m in (root?["models"]?.AsArray()??[]).Take(128))
+        return (await ScanModels(token)).Models;
+    }
+    /// <summary>Independent, bounded metadata checks. A broken model never discards healthy results.</summary>
+    public async Task<OllamaScanResult> ScanModels(CancellationToken token,IProgress<OllamaScanProgress>? progress=null)
+    {
+        using var budget=CancellationTokenSource.CreateLinkedTokenSource(token); budget.CancelAfter(TimeSpan.FromSeconds(15));
+        JsonNode? root;
+        using(var listing=CancellationTokenSource.CreateLinkedTokenSource(budget.Token))
         {
-            string name=m?["name"]?.GetValue<string>()??"";
-            if(name.Length==0) continue;
-            bool cloud=name.Contains("cloud",StringComparison.OrdinalIgnoreCase) || m?["remote_host"] is not null;
-            if(cloud || name.Contains("embed",StringComparison.OrdinalIgnoreCase)) continue;
-            var inspected=await Inspect(name,token);
-            if(inspected==null) continue;
-            DateTimeOffset? modified=DateTimeOffset.TryParse(m?["modified_at"]?.GetValue<string>(),out var date)?date:null;
-            models.Add(inspected with {Size=m?["size"]?.GetValue<long>()??0,Modified=modified});
-            if(models.Count>=128) break;
+            listing.CancelAfter(TimeSpan.FromSeconds(5));
+            try {root=JsonNode.Parse(await Send(HttpMethod.Get,"api/tags",null,listing.Token));}
+            catch(OperationCanceledException) when(!token.IsCancellationRequested) {throw new AiUnavailableException("Ollama's installed-model list timed out. Start Ollama or wait until it is responsive, then retry.");}
         }
-        return models;
+        if(root is not JsonObject || root["models"] is not JsonArray tags) throw new InvalidDataException("Ollama returned an invalid model list. Check or update Ollama.");
+        var candidates=tags.Take(128).Where(m=>m is JsonObject)
+            .Select(m=>(Name:m?["name"]?.GetValue<string>()??"",Size:m?["size"]?.GetValue<long>()??0,Modified:m?["modified_at"]?.GetValue<string>(),Remote:m?["remote_host"] is not null))
+            .Where(m=>m.Name.Length>0 && !m.Remote && !m.Name.Contains("cloud",StringComparison.OrdinalIgnoreCase) && !m.Name.Contains("embed",StringComparison.OrdinalIgnoreCase))
+            .DistinctBy(m=>m.Name).ToArray();
+        var results=new AiModel?[candidates.Length]; var issues=new OllamaScanIssue?[candidates.Length]; var completed=new bool[candidates.Length]; int count=0;
+        try
+        {
+            await Parallel.ForEachAsync(Enumerable.Range(0,candidates.Length),new ParallelOptions {MaxDegreeOfParallelism=3,CancellationToken=budget.Token},async(index,scanToken)=>
+            {
+                var candidate=candidates[index];
+                using var single=CancellationTokenSource.CreateLinkedTokenSource(scanToken); single.CancelAfter(TimeSpan.FromSeconds(3));
+                try
+                {
+                    var inspected=await Inspect(candidate.Name,single.Token);
+                    if(inspected!=null)
+                    {
+                        DateTimeOffset? modified=DateTimeOffset.TryParse(candidate.Modified,out var date)?date:null;
+                        results[index]=inspected with {Size=candidate.Size,Modified=modified};
+                    }
+                }
+                catch(OperationCanceledException) when(!token.IsCancellationRequested)
+                {issues[index]=new(candidate.Name,"Metadata check timed out. Retry when Ollama is responsive.");}
+                catch(AiUnavailableException)
+                {issues[index]=new(candidate.Name,"Ollama could not read this model. Its files may be missing or damaged; repair or re-download it in Ollama.");}
+                catch(HttpRequestException)
+                {issues[index]=new(candidate.Name,"Ollama became unreachable while checking this model.");}
+                catch(Exception e) when(e is InvalidDataException or InvalidOperationException or JsonException)
+                {issues[index]=new(candidate.Name,"Model metadata could not be verified. Check or update this model in Ollama.");}
+                completed[index]=true; int done=Interlocked.Increment(ref count);
+                progress?.Report(new(done,candidates.Length,candidate.Name));
+            });
+        }
+        catch(OperationCanceledException) when(!token.IsCancellationRequested) { }
+        token.ThrowIfCancellationRequested();
+        for(int index=0;index<candidates.Length;index++)
+            if(!completed[index]) issues[index]=new(candidates[index].Name,"Scan time limit reached before this model could be verified.");
+        return new(results.OfType<AiModel>().ToArray(),issues.OfType<OllamaScanIssue>().ToArray(),count,candidates.Length,tags.Count>128 || count<candidates.Length);
     }
     public async Task<AiModel?> Inspect(string name,CancellationToken token)
     {

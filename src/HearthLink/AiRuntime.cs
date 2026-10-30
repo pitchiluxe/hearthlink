@@ -5,7 +5,7 @@ namespace HearthLink;
 /// <summary>App-owned clients. Keys come only from protected local preferences, never paired PCs.</summary>
 public sealed class AiRuntime : IDisposable
 {
-    readonly HttpClient localClient=Ollama.CreateClient(),cloudClient=CloudAiProvider.CreateClient(),catalogClient=CloudAiProvider.CreateClient();
+    readonly HttpClient localClient,cloudClient=CloudAiProvider.CreateClient(),catalogClient=CloudAiProvider.CreateClient();
     readonly Func<AiOptions> options;
     readonly AiRouter router;
     public Ollama Local {get;}
@@ -13,8 +13,9 @@ public sealed class AiRuntime : IDisposable
     public CloudAiProvider Claude {get;}
     public OllamaCatalog Catalog {get;}
     public AiOptions Options=>options();
-    public AiRuntime(Func<AiOptions> settings)
+    public AiRuntime(Func<AiOptions> settings,HttpClient? local=null)
     {
+        localClient=local??Ollama.CreateClient();
         options=settings; Local=new(localClient); OpenAI=new(cloudClient,false); Claude=new(cloudClient,true); Catalog=new(catalogClient);
         router=new(settings,new OllamaProvider(Local),OpenAI,Claude);
     }
