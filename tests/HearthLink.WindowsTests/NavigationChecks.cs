@@ -29,6 +29,20 @@ static class NavigationChecks
         buttons.Single(b=>b.Name=="Nav:Your computers").PerformClick();
         var flags=BindingFlags.Instance|BindingFlags.NonPublic;
         var identity=(IdentityStore)typeof(MainWindow).GetField("identity",flags)!.GetValue(owner)!;
+        buttons.Single(b=>b.Name=="Nav:Access & security").PerformClick();
+        var accessController=Descendants(owner).OfType<CheckBox>().Single(c=>c.Name=="ControllerAccess");
+        var settingsController=(CheckBox)typeof(MainWindow).GetField("controllerEnabled",flags)!.GetValue(owner)!;
+        check(accessController.Visible && accessController.Text=="Use as a controller","controller option is visible under Access & security");
+        bool controllerBefore=settingsController.Checked;
+        try
+        {
+            accessController.Checked=!controllerBefore;
+            bool changed=settingsController.Checked==!controllerBefore && identity.Config.Controller==!controllerBefore;
+            settingsController.Checked=controllerBefore;
+            check(changed && accessController.Checked==controllerBefore,"controller options stay synchronized in Access & security and Settings");
+        }
+        finally {settingsController.Checked=controllerBefore;}
+        buttons.Single(b=>b.Name=="Nav:Your computers").PerformClick();
         var list=(ListView)typeof(MainWindow).GetField("hosts",flags)!.GetValue(owner)!;
         var search=Descendants(owner).OfType<TextBox>().Single(t=>t.Name=="ComputerSearch");
         var original=identity.Config.Hosts.ToArray(); var favorites=identity.Config.Favorites.ToArray();

@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.6.1 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.6.2 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.6.2 restores **Use as a controller** directly under **Access & security**, below Allow incoming sessions. It also remains in **Settings → General**; both controls update the same saved role and stay synchronized. Existing role choices and connection/security checks are preserved.
 
 Version 0.6.1 fixes **Scan installed models** failing when one Ollama entry has missing/unreadable model data. Healthy verified models remain available; broken/timed-out entries are listed with repair guidance. The scan uses up to three metadata checks concurrently, per-model timeouts, progress and Cancel. A stopped local Ollama service now produces a start/retry instruction instead of advice about cloud credentials or internet. No models are deleted, downloaded or changed. [Hotfix details](docs/UPDATE-0.6.1.md).
 

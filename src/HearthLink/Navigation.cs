@@ -69,9 +69,12 @@ public sealed partial class MainWindow
     {
         root.Controls.Remove(home); root.Controls.Add(pageDeck,1,0);
         pages.Add("Your computers",home);
+        var accessController=new CheckBox {Name="ControllerAccess",Text="Use as a controller",AutoSize=true,Checked=controllerEnabled.Checked};
+        accessController.CheckedChanged+=(_,_)=>controllerEnabled.Checked=accessController.Checked;
+        controllerEnabled.CheckedChanged+=(_,_)=>accessController.Checked=controllerEnabled.Checked;
         // Reparent these controls once. Navigation only changes page visibility.
         pages.Add("Access & security",Page("Access & security","Choose who can access this PC. Removing a PC revokes both roles.",
-            (hostEnabled,38),(lanListener,48),(unattended,48),
+            (hostEnabled,38),(accessController,38),(lanListener,48),(unattended,48),
             (Note("Unattended changes require Windows Hello on this PC. Pairing and session approval rules remain in effect."),50),
             (Row(Action("End remote session",()=>server?.Disconnect())),46),(securityList,-1)));
         var defaultControl=new CheckBox {Name="DefaultControl",Text="Request keyboard and mouse control by default",Checked=identity.Config.DefaultControl,AutoSize=true};
