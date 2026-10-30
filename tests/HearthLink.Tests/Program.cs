@@ -207,5 +207,6 @@ UnattendedChecks.Run(Check);
 HistoryChecks.Run(Check);
 await UpdateChecks.Run(Check);
 await AssistantChecks.Run(Check);
+await AiChecks.Run(Check);
 Console.WriteLine($"{passed} checks passed.");
 void CheckQuiet(bool value) {if(!value) throw new Exception("Fixture enqueue failed");}

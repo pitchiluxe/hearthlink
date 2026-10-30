@@ -35,6 +35,7 @@ public sealed partial class MainWindow : Form
     (Action End,bool Unattended)? incoming;
     readonly NotifyIcon sessionTray=new() {Icon=Brand.AppIcon,Text="HearthLink"};
     readonly UpdateCenter updates;
+    readonly AiRuntime ai;
     /// <summary>Proves someone is at this PC before unattended access changes. Windows Hello by default; tests substitute their own.</summary>
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Func<string,Task<PresenceCheck>> VerifyPresence { get; set; }
@@ -42,10 +43,12 @@ public sealed partial class MainWindow : Form
     public MainWindow(IdentityStore? store=null)
     {
         identity=store??new IdentityStore();
+        ai=new(()=>identity.Config.Ai??new());
         if(store==null) identity.RelayOverride=Environment.GetEnvironmentVariable("HEARTHLINK_RELAY_URL");
         updates=new(this,identity);
         VerifyPresence=reason=>WindowsHello.Verify(Handle,reason);
-        Text="HearthLink • Your computers"; Size=new(1280,840); MinimumSize=new(1100,760);
+        Text="HearthLink • Your computers"; FormBorderStyle=FormBorderStyle.FixedSingle; MaximizeBox=false;
+        Size=new(1096,783); MinimumSize=Size; MaximumSize=Size;
         Font=new("Segoe UI",10); BackColor=Brand.Canvas; ForeColor=Brand.Ink; Icon=Brand.AppIcon;
         var root=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,RowCount=1,Margin=Padding.Empty};
         root.ColumnStyles.Add(new(SizeType.Absolute,210)); root.ColumnStyles.Add(new(SizeType.Percent,100)); Controls.Add(root);
@@ -132,6 +135,7 @@ public sealed partial class MainWindow : Form
         poll.Tick+=async(_,_)=>await RefreshHosts();
         pairingExpiry.Tick+=(_,_)=>ClosePairing("Pairing is closed");
         FormClosing+=(_,_)=> { poll.Stop(); pairingExpiry.Stop(); updates.Dispose(); presence?.Dispose(); server?.Dispose(); notice?.CloseAfterSession(); notice=null; sessionTray.Visible=false; sessionTray.Dispose(); };
+        FormClosed+=(_,_)=>ai.Dispose();
     }
     sealed record ControllerItem(string Name,string Fingerprint) { public override string ToString()=>Name+" • "+Fingerprint; }
     static Label Title(string text,int size)=>new() {Text=text,Font=new("Segoe UI",size,FontStyle.Bold),ForeColor=Brand.Ink,Dock=DockStyle.Top,Height=size+15};
@@ -453,7 +457,7 @@ public sealed partial class MainWindow : Form
                 catch(Exception e) { if(!navigationLifetime.IsCancellationRequested) {connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning);} }
             };
             var viewer=new Viewer(connection,name,allowControl,reply.Monitors??["Display 1"],route,openFiles,reconnect,
-                strip=>ObserveTransfer(strip,name),Math.Clamp(identity.Config.DefaultQuality,0,DesktopCapture.Profiles.Length-1));
+                strip=>ObserveTransfer(strip,name),Math.Clamp(identity.Config.DefaultQuality,0,DesktopCapture.Profiles.Length-1),ai);
             viewer.FormClosed+=(_,_)=>RefreshSessionShortcut();
             viewer.SessionStateChanged+=RefreshSessionShortcut;
             viewer.Show(this); connection=null;

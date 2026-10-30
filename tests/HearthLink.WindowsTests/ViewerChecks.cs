@@ -33,9 +33,11 @@ static class ViewerChecks
         check(acked.SequenceEqual([1L,2L,3L]),"a minimized viewer still acknowledges every frame");
 
         bool ended=false;
-        var notice=await window.OnUi(()=> { var n=new SessionNotice("TECHNOBIZ-ASUS",true,()=>ended=true,TimeSpan.FromMilliseconds(300)); n.Show(); return n; });
-        bool fullAtStart=await window.OnUi(()=>!notice.Collapsed && notice.Height>100);
-        await Task.Delay(1000);
+        // Do not depend on or move the user's actual pointer: hovering intentionally keeps the notice open.
+        var shown=await window.OnUi(()=> { var n=new SessionNotice("TECHNOBIZ-ASUS",true,()=>ended=true,TimeSpan.FromMilliseconds(300),()=>Point.Empty); n.Show(); return (Notice:n,Full:!n.Collapsed && n.Height>100); });
+        var notice=shown.Notice; bool fullAtStart=shown.Full;
+        var wait=System.Diagnostics.Stopwatch.StartNew();
+        while(wait.Elapsed<TimeSpan.FromSeconds(5) && !await window.OnUi(()=>notice.Collapsed)) await Task.Delay(100);
         var collapsed=await window.OnUi(()=>(notice.Collapsed,notice.Visible,notice.TopMost,notice.Height,notice.Bounds));
         var area=Screen.PrimaryScreen!.WorkingArea;
         check(fullAtStart && collapsed.Collapsed && collapsed.Visible && collapsed.TopMost && collapsed.Height<=40 && area.Contains(collapsed.Bounds),"session notice collapses to a small tab that stays on screen and on top");

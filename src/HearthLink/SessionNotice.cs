@@ -13,7 +13,7 @@ public sealed class SessionNotice : Form
     public Button EndButton { get; }
     public bool Collapsed { get; private set; }
     protected override bool ShowWithoutActivation=>true;
-    public SessionNotice(string controller,bool control,Action endSession,TimeSpan? collapseAfter=null)
+    public SessionNotice(string controller,bool control,Action endSession,TimeSpan? collapseAfter=null,Func<Point>? pointerPosition=null)
     {
         Text="HearthLink • active connection"; FormBorderStyle=FormBorderStyle.FixedToolWindow;
         ControlBox=false; ShowInTaskbar=false; TopMost=true; BackColor=Brand.Navy; ForeColor=Color.White; Font=new("Segoe UI",10); Icon=Brand.AppIcon;
@@ -26,7 +26,8 @@ public sealed class SessionNotice : Form
         StartPosition=FormStartPosition.Manual;
         collapse.Interval=(int)(collapseAfter??TimeSpan.FromSeconds(5)).TotalMilliseconds;
         // Stays open while the pointer is over the full panel, then folds back into the tab.
-        collapse.Tick+=(_,_)=> { if(!Bounds.Contains(Cursor.Position)) Collapse(); };
+        var pointer=pointerPosition??(()=>Cursor.Position);
+        collapse.Tick+=(_,_)=> { if(!Bounds.Contains(pointer())) Collapse(); };
         FormClosing+=(_,e)=> {if(!ended) e.Cancel=true;};
         Disposed+=(_,_)=>collapse.Dispose();
         Expand();

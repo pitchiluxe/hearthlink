@@ -94,10 +94,14 @@ public sealed partial class MainWindow
             }
             catch(Exception e) when(e is IOException or UnauthorizedAccessException) {settingsNote.Text="Could not save. Check disk space and access to your profile folder.";}
         });
-        pages.Add("Settings",Page("Settings","Your computer and session preferences.",(ScrollSettings(
+        var general=ScrollSettings(
             (Title("Computer name",14),34),(nameEditor,46),(controllerEnabled,40),(Title("New sessions",14),48),
             (defaultControl,40),(Note("Default image quality"),30),(Row(quality),44),(autoUpdates,48),
-            (Row(saveDefaults),48),(settingsNote,64)),-1)));
+            (Row(saveDefaults),48),(settingsNote,64));
+        var settingsTabs=new TabControl {Name="SettingsTabs",Dock=DockStyle.Fill};
+        var generalTab=new TabPage("General") {BackColor=Color.White}; generalTab.Controls.Add(general); settingsTabs.TabPages.Add(generalTab);
+        var aiTab=new TabPage("AI providers & performance") {BackColor=Color.White}; aiTab.Controls.Add(new AiSettingsPanel(identity,ai)); settingsTabs.TabPages.Add(aiTab);
+        pages.Add("Settings",Page("Settings","Your computer, AI providers and session preferences.",(settingsTabs,-1)));
         pages.Add("Recent sessions",Page("Recent sessions","Reconnect to a currently paired computer. The host's approval settings still apply.",
             (recentGrid,-1),(recentNote,44),(Row(recentControl,AsyncAction("Connect selected",ConnectRecent),Action("Refresh",LoadRecent)),46)));
         historySearch.TextChanged+=(_,_)=>LoadHistory();
@@ -284,7 +288,8 @@ public sealed partial class MainWindow
     }
     void RefreshHealth()
     {
-        healthNote.Text=$"This PC: {hostStatus.Text}\n{relayCheck}\nLast successful relay check: {(lastSuccessfulCheck is {} checkedAt?checkedAt.ToString("g"):"Not yet")}\nLive viewer routes are shown in each session toolbar.";
+        healthNote.Text=$"This PC: {hostStatus.Text}\n{relayCheck}\nLast successful relay check: {(lastSuccessfulCheck is {} checkedAt?checkedAt.ToString("g"):"Not yet")}\n"+
+            string.Join(" | ",OwnedForms.OfType<Viewer>().Where(v=>v.SessionActive).Select(v=>v.AgentStatus).DefaultIfEmpty("No live viewer; AI performance agent waits for a session."));
         healthGrid.Rows.Clear();
         foreach(var peer in identity.Config.Hosts) healthGrid.Rows.Add(PeerName.Clean(peer.Name),peerStates.GetValueOrDefault(peer.Fingerprint,"Not checked"),Seen(peer.LastSeen));
     }
@@ -300,6 +305,7 @@ public sealed partial class MainWindow
         if(selected!=null && liveSessions.Items.Contains(selected)) liveSessions.SelectedItem=selected;
         else if(liveSessions.Items.Count>0) liveSessions.SelectedIndex=0;
         if(transferActivity.Count==0) transferNote.Text=liveSessions.Items.Count==0?"Start a control session, then open its file manager here. View-only sessions cannot transfer files.":"Choose a session and Open file manager. Transfers appear here as they start.";
+        if(currentPage=="Connection health") RefreshHealth();
     }
     void ObserveTransfer(TransferStrip strip,string peer)
     {

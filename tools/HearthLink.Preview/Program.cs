@@ -15,7 +15,7 @@ internal static class Preview
             // Render the application's own controls. No screen capture, network hosting,
             // simulated peer or production identity is used by this preview tool.
             window.Show(); Application.DoEvents();
-            foreach(var size in new[]{new Size(1340,880),new Size(1120,790)})
+            foreach(var size in new[]{window.ClientSize})
             {
                 window.ClientSize=size; window.PerformLayout(); Application.DoEvents();
                 using var image=new Bitmap(window.Width,window.Height);
@@ -31,7 +31,15 @@ internal static class Preview
                 string path=Path.Combine(output,"HearthLink-"+section.Replace(' ','-').Replace('&','a')+".png");
                 image.Save(path,ImageFormat.Png); Console.WriteLine(path);
             }
-            typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,["Help & updates"]);
+            typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,["Settings"]);
+            var aiTabs=window.Controls.Find("SettingsTabs",true).OfType<TabControl>().Single();
+            aiTabs.SelectedIndex=1; Application.DoEvents();
+            using(var aiImage=new Bitmap(window.Width,window.Height))
+            {
+                window.DrawToBitmap(aiImage,new Rectangle(Point.Empty,aiImage.Size));
+                aiImage.Save(Path.Combine(output,"HearthLink-AI-settings.png"),ImageFormat.Png);
+            }
+            aiTabs.SelectedIndex=0;
             Button? FindUpdates(Control root)
             {
                 foreach(Control child in root.Controls)
@@ -47,11 +55,14 @@ internal static class Preview
                 string path=Path.Combine(output,"HearthLink-updates.png"); image.Save(path,ImageFormat.Png); Console.WriteLine(path);
             }
             // Scaled-layout checks supplement native DPI acceptance; this does not change Windows display settings.
+            var baseClient=window.ClientSize;
+            // The product is fixed-size; only this isolated preview harness releases its bounds for simulated scaling.
+            window.MinimumSize=Size.Empty; window.MaximumSize=Size.Empty;
             float previousScale=1;
             foreach(float scale in new[]{1.25f,2f})
             {
                 window.Scale(new SizeF(scale/previousScale,scale/previousScale)); previousScale=scale;
-                window.ClientSize=new((int)(1120*scale),(int)(790*scale));
+                window.ClientSize=new((int)(baseClient.Width*scale),(int)(baseClient.Height*scale));
                 foreach(string section in new[]{"Your computers","Access & security","Settings"})
                 {
                     typeof(MainWindow).GetMethod("Navigate",System.Reflection.BindingFlags.Instance|System.Reflection.BindingFlags.NonPublic)!.Invoke(window,[section]);

@@ -40,20 +40,40 @@ public sealed class Viewer : Form
     readonly Label lostText=new() {Dock=DockStyle.Fill,ForeColor=Color.White,TextAlign=ContentAlignment.MiddleCenter};
     readonly Func<CancellationToken,Task<Connection>>? filesFactory;
     readonly Action<TransferStrip>? observeTransfer;
+    readonly AiRuntime? ai;
+    readonly PerformanceAgent? performance;
+    int currentQuality;
+    bool manualQuality,agentBusy;
+    string agentStatus="Local AI agent not configured";
+    DateTimeOffset lastFrameAt;
+    [System.ComponentModel.Browsable(false)]
+    public string AgentStatus=>agentStatus;
     public event Action? SessionStateChanged;
     [System.ComponentModel.Browsable(false)]
     public bool SessionActive=>!stop.IsCancellationRequested && !closing && !sessionLost;
     [System.ComponentModel.Browsable(false)]
     public bool CanTransfer=>SessionActive && control && filesFactory!=null;
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=0)
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=0,AiRuntime? aiRuntime=null)
     {
         connection=c; control=allowControl;
         filesFactory=openFiles; observeTransfer=observeTransfers;
+        ai=aiRuntime;
+        if(ai!=null)
+        {
+            performance=new(()=>ai.Options,(sample,config,token)=>ai.Background(sample,config,token,message=>
+            {if(!manualQuality && SessionActive && ReferenceEquals(config,ai.Options)) SetAgentStatus(message);}));
+            agentStatus=ai.Options.PerformanceAgent?"Local AI monitoring (no cloud)":"Local AI agent off";
+        }
         Text="HearthLink • "+name; Width=1280; Height=800; MinimumSize=new(640,400); KeyPreview=true; Icon=Brand.AppIcon; Font=new("Segoe UI",10);
         // Menu buttons, as in TeamViewer's toolbar: a menu pops up above everything, where combo box lists failed to open on some PCs.
         var displays=Choice(monitors,0,index=> {Volatile.Write(ref desiredMonitor,index); Post(new("monitor",Value:index));});
         initialQuality=Math.Clamp(initialQuality,0,DesktopCapture.Profiles.Length-1);
-        var profile=Choice(DesktopCapture.Profiles,initialQuality,index=>Post(new("profile",Value:index)));
+        currentQuality=initialQuality;
+        var profile=Choice(DesktopCapture.Profiles,initialQuality,index=>
+        {
+            currentQuality=index; manualQuality=true; performance?.ManualOverride();
+            SetAgentStatus("Local AI paused: manual quality"); Post(new("profile",Value:index));
+        });
         if(initialQuality!=0) Post(new("profile",Value:initialQuality));
         var fullscreen=Brand.Style(new Button {Text="Full screen",AutoSize=true}); fullscreen.Click+=(_,_)=>ToggleFull();
         var disconnect=Brand.Style(new Button {Text="Disconnect",AutoSize=true},true); disconnect.Click+=(_,_)=>Close();
@@ -122,12 +142,15 @@ public sealed class Viewer : Form
         screen.LostFocus+=(_,_)=>Post(new("release")); Deactivate+=(_,_)=>Post(new("release"));
         screen.Presented+=sequence=>
         {
+            lastFrameAt=DateTimeOffset.UtcNow;
             Post(new("presented",Sequence:sequence)); shownFrames++;
             if(counter.Elapsed.TotalSeconds>=1 && current!=null)
             {
                 double fps=shownFrames/counter.Elapsed.TotalSeconds;
-                double stages=(current.CaptureMicroseconds+current.EncodeMicroseconds)/1000d;
-                status.Text=$"{fps:F0} fps • host {stages:F0} ms • round trip {current.RoundTripMilliseconds} ms • {route}";
+                double stages=(current.CaptureMicroseconds+(long)current.EncodeMicroseconds)/1000d;
+                status.Text=$"{fps:F0} fps • host {stages:F0} ms • round trip {current.RoundTripMilliseconds} ms • {route} • {agentStatus}";
+                if(performance!=null && !agentBusy && !manualQuality && WindowState!=FormWindowState.Minimized && Visible)
+                    _=ConsiderQuality(new(fps,current.RoundTripMilliseconds,stages,currentQuality,shownFrames),profile);
                 shownFrames=0; counter.Restart();
             }
         };
@@ -142,9 +165,39 @@ public sealed class Viewer : Form
     {
         if(!CanTransfer) return;
         if(fileManager is {IsDisposed:false}) {fileManager.Activate(); return;}
-        fileManager=new FileManagerWindow(Text["HearthLink • ".Length..],filesFactory!,observeTransfer);
+        fileManager=new FileManagerWindow(Text["HearthLink • ".Length..],filesFactory!,observeTransfer,ai);
         fileManager.FormClosed+=(_,_)=>fileManager=null;
         fileManager.Show(this);
+    }
+    void SetAgentStatus(string text)
+    {
+        if(agentStatus==text) return; agentStatus=text; SessionStateChanged?.Invoke();
+    }
+    async Task ConsiderQuality(PerformanceSample sample,Button profile)
+    {
+        if(performance==null || ai==null || agentBusy || stop.IsCancellationRequested) return;
+        agentBusy=true;
+        try
+        {
+            if(!ai.Options.PerformanceAgent) {SetAgentStatus("Local AI agent off"); return;}
+            if(currentQuality<=ai.Options.MinimumQuality) {SetAgentStatus("Local AI: already at minimum quality"); return;}
+            if(currentQuality>ai.Options.MaximumQuality) {SetAgentStatus("Local AI: current quality is outside its allowed range"); return;}
+            int? suggested=await performance.Evaluate(sample,DateTimeOffset.UtcNow,()=>currentQuality,
+                ()=>SessionActive && !manualQuality && WindowState!=FormWindowState.Minimized && Visible &&
+                    DateTimeOffset.UtcNow-lastFrameAt<TimeSpan.FromSeconds(3),stop.Token);
+            if(suggested is {} next && next!=currentQuality)
+            {
+                if(current==null || (current.RoundTripMilliseconds<180 && (current.CaptureMicroseconds+(long)current.EncodeMicroseconds)/1000d<100))
+                {SetAgentStatus("Local AI: connection recovered; quality unchanged"); return;}
+                currentQuality=next; Post(new("profile",Value:next)); profile.Text=DesktopCapture.Profiles[next]+"  ▾";
+                if(profile.Tag is ContextMenuStrip menu)
+                    for(int i=0;i<menu.Items.Count;i++) if(menu.Items[i] is ToolStripMenuItem item) item.Checked=i==next;
+                SetAgentStatus("Local AI selected "+DesktopCapture.Profiles[next]+" for congestion");
+            }
+        }
+        catch(Exception e) when(e is HttpRequestException or IOException or InvalidOperationException or System.Text.Json.JsonException or OperationCanceledException)
+        {if(!stop.IsCancellationRequested) SetAgentStatus("Local AI unavailable; quality unchanged");}
+        finally {agentBusy=false;}
     }
     /// <summary>
     /// Closes the session connection on a pool thread. Closing a relay tunnel waits up to 3 s for the close handshake,
@@ -167,6 +220,7 @@ public sealed class Viewer : Form
     {
         var button=Brand.Style(new Button {Text=options[selected]+"  ▾",AutoSize=true,Margin=new(0,0,8,0)});
         var menu=new ContextMenuStrip {Font=Font,ShowCheckMargin=true,ShowImageMargin=false};
+        button.Tag=menu;
         for(int i=0;i<options.Length;i++)
         {
             int index=i; var item=new ToolStripMenuItem(options[i]) {Checked=i==selected};

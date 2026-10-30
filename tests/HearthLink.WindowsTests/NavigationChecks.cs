@@ -16,6 +16,8 @@ static class NavigationChecks
     {
       await owner.OnUi(()=>
       {
+        check(owner.FormBorderStyle==FormBorderStyle.FixedSingle && !owner.MaximizeBox &&
+            owner.MinimumSize==owner.MaximumSize && !owner.MinimumSize.IsEmpty,"main app window has fixed bounds and no resize/maximize controls");
         string[] sections=["Your computers","Recent sessions","File transfers","Access & security","Connection health","Session history","Settings","Help & updates"];
         var buttons=Descendants(owner).OfType<Button>().Where(b=>b.Name.StartsWith("Nav:")).ToArray();
         check(sections.All(s=>buttons.Any(b=>b.Name=="Nav:"+s)),"all eight sidebar destinations exist");
@@ -68,12 +70,34 @@ static class NavigationChecks
         }
         var defaults=new Settings();
         check(defaults.DefaultControl && defaults.DefaultQuality==0 && defaults.Favorites.Count==0,"older settings retain compatible default session preferences");
+        check(!defaults.Ai.CloudFallback && defaults.Ai.PerformanceAgent && defaults.Ai.MinimumQuality==0 && defaults.Ai.MaximumQuality==2,"AI defaults keep cloud fallback off and automatic quality in the approved range");
+        var aiTabs=Descendants(owner).OfType<TabControl>().Single(t=>t.Name=="SettingsTabs");
+        check(aiTabs.TabPages.Count==2 && Descendants(owner).OfType<TextBox>().Where(t=>t.Name is "OpenAIKey" or "ClaudeKey").All(t=>t.UseSystemPasswordChar),"Settings includes AI provider controls with masked API key fields");
         string folder=Path.Combine(Path.GetTempPath(),"HearthLink-navigation-"+Guid.NewGuid().ToString("N"));
         try
         {
             var store=new IdentityStore(folder); store.Config.DefaultControl=false; store.Config.DefaultQuality=3; store.Config.Favorites.Add(second); store.Save();
+            store.Config.Ai=new() {CloudFallback=true,OpenAIKey="fixture-openai-key",OpenAIModel="gpt-fixture",ClaudeKey="fixture-claude-key",ClaudeModel="claude-fixture",MinimumQuality=1,MaximumQuality=3}; store.Save();
             var loaded=new IdentityStore(folder);
             check(!loaded.Config.DefaultControl && loaded.Config.DefaultQuality==3 && loaded.Config.Favorites.Contains(second),"new preferences survive protected storage roundtrip");
+            check(loaded.Config.Ai.CloudFallback && loaded.Config.Ai.OpenAIKey=="fixture-openai-key" && loaded.Config.Ai.MinimumQuality==1 &&
+                !System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(folder,"settings.protected"))).Contains("fixture-openai-key") && !loaded.Config.Ai.ToString().Contains("fixture"),"AI keys and preferences roundtrip through DPAPI without plaintext credential storage or diagnostic rendering");
+            using(var runtime=new AiRuntime(()=>store.Config.Ai))
+            using(var panel=new AiSettingsPanel(store,runtime))
+            {
+                string protectedPath=Path.Combine(folder,"settings.protected");
+                var prior=store.Config.Ai;
+                var key=Descendants(panel).OfType<TextBox>().Single(t=>t.Name=="OpenAIKey"); key.Text="fixture-changed";
+                bool escaped=false;
+                try
+                {
+                    File.SetAttributes(protectedPath,FileAttributes.ReadOnly);
+                    try {typeof(AiSettingsPanel).GetMethod("Save",flags)!.Invoke(panel,null);}
+                    catch(TargetInvocationException) {escaped=true;}
+                }
+                finally {File.SetAttributes(protectedPath,FileAttributes.Normal);}
+                check(!escaped && ReferenceEquals(store.Config.Ai,prior),"denied AI-settings writes are handled in the UI and preserve previous credentials");
+            }
             File.WriteAllText(Path.Combine(folder,"history.jsonl"),"broken\nnull\n");
             for(int i=0;i<1100;i++) store.Audit(second,"outbound-connected");
             File.AppendAllText(Path.Combine(folder,"history.jsonl"),"{truncated");

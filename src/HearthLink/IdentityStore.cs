@@ -15,6 +15,7 @@ public sealed class Settings
     public bool DefaultControl {get;set;}=true;
     public int DefaultQuality {get;set;}
     public List<string> Favorites {get;set;}=[];
+    public AiOptions Ai {get;set;}=new();
     public TrustBook Controllers { get; set; }=new();
     public List<Peer> Hosts { get; set; }=[];
     /// <summary>A relay the user chose; empty means the app's built-in <see cref="RelayClient.DefaultUrl"/>, so saved settings follow app updates.</summary>

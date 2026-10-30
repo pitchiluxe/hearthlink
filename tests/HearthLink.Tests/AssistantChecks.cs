@@ -42,6 +42,7 @@ static class AssistantChecks
         using var client=new HttpClient(new Handler((request,body)=>
         {
             asked=request.RequestUri;
+            if(request.RequestUri!.AbsolutePath=="/api/show") return new(HttpStatusCode.OK) {Content=new StringContent("""{"capabilities":["completion","tools"]}""")};
             if(request.RequestUri!.AbsolutePath=="/api/tags") return new(HttpStatusCode.OK) {Content=new StringContent("""{"models":[{"name":"qwen3.5:latest","size":6600000000,"capabilities":["completion","tools"]},{"name":"gpt-oss:120b-cloud","size":1,"capabilities":["completion","tools"]},{"name":"x:latest","size":1,"remote_host":"https://ollama.com","capabilities":["completion"]},{"name":"nomic-embed-text:latest","size":1,"capabilities":["embedding"]},{"name":"llama2:latest","size":3800000000}]}""")};
             sent=body;
             if(body!.Contains("\"broken\"")) return new(HttpStatusCode.NotFound) {Content=new StringContent("""{"error":"model 'broken' not found"}""")};

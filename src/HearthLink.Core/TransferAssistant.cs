@@ -5,7 +5,7 @@ using System.Text.Json.Nodes;
 namespace HearthLink.Core;
 
 /// <summary>A model installed in the local Ollama: its name, download size and what it can do ("completion", "tools"…).</summary>
-public sealed record AiModel(string Name,long Size,IReadOnlyList<string> Capabilities,bool Cloud);
+public sealed record AiModel(string Name,long Size,IReadOnlyList<string> Capabilities,bool Cloud,DateTimeOffset? Modified=null);
 /// <summary>One message of a chat with the model ("system", "user" or "assistant").</summary>
 public sealed record AiMessage(string Role,string Content);
 /// <summary>
@@ -27,18 +27,36 @@ public sealed class Ollama(HttpClient client)
     /// <summary>The installed models that can chat and run on this PC.</summary>
     public async Task<IReadOnlyList<AiModel>> Models(CancellationToken token)
     {
-        var root=JsonNode.Parse(await Body(await client.GetAsync(new Uri(Address,"api/tags"),token),token));
+        var root=JsonNode.Parse(await Send(HttpMethod.Get,"api/tags",null,token));
         var models=new List<AiModel>();
-        foreach(var m in root?["models"]?.AsArray()??[])
+        foreach(var m in (root?["models"]?.AsArray()??[]).Take(128))
         {
             string name=m?["name"]?.GetValue<string>()??"";
             if(name.Length==0) continue;
-            var caps=m?["capabilities"]?.AsArray().Select(c=>c?.GetValue<string>()??"").ToArray()??["completion"];
             bool cloud=name.Contains("cloud",StringComparison.OrdinalIgnoreCase) || m?["remote_host"] is not null;
-            if(cloud || !caps.Contains("completion") || name.Contains("embed",StringComparison.OrdinalIgnoreCase)) continue;
-            models.Add(new(name,m?["size"]?.GetValue<long>()??0,caps,cloud));
+            if(cloud || name.Contains("embed",StringComparison.OrdinalIgnoreCase)) continue;
+            var inspected=await Inspect(name,token);
+            if(inspected==null) continue;
+            DateTimeOffset? modified=DateTimeOffset.TryParse(m?["modified_at"]?.GetValue<string>(),out var date)?date:null;
+            models.Add(inspected with {Size=m?["size"]?.GetValue<long>()??0,Modified=modified});
+            if(models.Count>=128) break;
         }
         return models;
+    }
+    public async Task<AiModel?> Inspect(string name,CancellationToken token)
+    {
+        if(string.IsNullOrWhiteSpace(name) || name.Length>160 || name.Any(c=>!char.IsAsciiLetterOrDigit(c) && c is not ('.' or '-' or '_' or ':' or '/')) || name.Contains("cloud",StringComparison.OrdinalIgnoreCase)) return null;
+        var root=JsonNode.Parse(await Send(HttpMethod.Post,"api/show",new JsonObject {["model"]=name},token));
+        bool remote=root?["remote_host"] is not null || root?["remote_model"] is not null;
+        var caps=root?["capabilities"]?.AsArray().Select(c=>c?.GetValue<string>()??"").ToArray()??[];
+        if(remote || !caps.Contains("completion")) return null;
+        return new(name,0,caps,false);
+    }
+    async Task<string> Send(HttpMethod method,string path,JsonObject? body,CancellationToken token)
+    {
+        using var request=new HttpRequestMessage(method,new Uri(Address,path));
+        if(body!=null) request.Content=new StringContent(body.ToJsonString(),Encoding.UTF8,"application/json");
+        return await Body(await client.SendAsync(request,HttpCompletionOption.ResponseHeadersRead,token),token);
     }
 
     /// <summary>
@@ -54,17 +72,16 @@ public sealed class Ollama(HttpClient client)
     }
 
     /// <summary>One chat turn. With <paramref name="format"/> (a JSON schema) the reply is JSON in that shape; without it, plain text.</summary>
-    public async Task<string> Chat(string model,IEnumerable<AiMessage> messages,JsonNode? format,CancellationToken token)
+    public async Task<string> Chat(string model,IEnumerable<AiMessage> messages,JsonNode? format,CancellationToken token,bool background=false)
     {
         var body=new JsonObject
         {
-            ["model"]=model,["stream"]=false,["think"]=false,["keep_alive"]="10m",
-            ["options"]=new JsonObject {["temperature"]=0},
+            ["model"]=model,["stream"]=false,["think"]=false,["keep_alive"]=background?"0":"5m",
+            ["options"]=background?new JsonObject {["temperature"]=0,["num_predict"]=160,["num_ctx"]=2048,["num_thread"]=2}:new JsonObject {["temperature"]=0,["num_predict"]=1200,["num_ctx"]=8192},
             ["messages"]=new JsonArray(messages.Select(m=>(JsonNode)new JsonObject {["role"]=m.Role,["content"]=m.Content}).ToArray()),
         };
         if(format!=null) body["format"]=format.DeepClone();
-        using var content=new StringContent(body.ToJsonString(),Encoding.UTF8,"application/json");
-        var root=JsonNode.Parse(await Body(await client.PostAsync(new Uri(Address,"api/chat"),content,token),token));
+        var root=JsonNode.Parse(await Send(HttpMethod.Post,"api/chat",body,token));
         return root?["message"]?["content"]?.GetValue<string>()?.Trim() ?? throw new InvalidDataException("Ollama sent an empty reply.");
     }
 
@@ -85,7 +102,9 @@ public sealed class Ollama(HttpClient client)
             if(!response.IsSuccessStatusCode)
             {
                 string? error=null; try { error=JsonNode.Parse(text)?["error"]?.GetValue<string>(); } catch(JsonException) { }
-                throw new InvalidOperationException("Ollama: "+(error??response.ReasonPhrase??"request failed"));
+                string message="Ollama: "+(error??response.ReasonPhrase??"request failed");
+                if((int)response.StatusCode is 404 or 408 or 429 || (int)response.StatusCode>=500) throw new AiUnavailableException(message);
+                throw new InvalidDataException(message);
             }
             return text;
         }
@@ -144,7 +163,7 @@ public static class TransferAssistant
     public const string Instructions="""
         You are the file transfer helper inside HearthLink, a remote desktop app. The user sees two folders side by side:
         LOCAL (this PC) and REMOTE (the other PC). You can only propose a copy; the user must press Run, and nothing is
-        ever deleted or overwritten. Answer with JSON only:
+        ever deleted by you. Copies can replace same-named destination files; clearly mention that when proposing a copy. Answer with JSON only:
         - action: "copy" to propose a copy, or "answer" to just reply (questions, or when the request is unclear).
         - direction: "to_remote" copies from LOCAL into the REMOTE folder; "to_local" copies from REMOTE into the LOCAL folder.
         - items: names exactly as listed in the folder you copy FROM. Never invent names or write full paths.

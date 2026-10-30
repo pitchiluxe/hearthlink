@@ -3,13 +3,14 @@ using System.Text.Json;
 
 namespace HearthLink;
 /// <summary>
-/// The AI helper beside the file manager, run by Ollama on this PC. It turns a request in plain words into a copy plan
+/// The AI helper beside the file manager: Ollama first, then explicitly enabled cloud providers. It turns a request into a copy plan
 /// the user runs with one click, watches each batch (pointing out heavy folders such as node_modules) and explains failures.
 /// It never moves anything by itself.
 /// </summary>
 public sealed class AssistantPanel : Panel
 {
-    readonly Ollama ollama=new(Ollama.CreateClient());
+    readonly AiRuntime runtime;
+    readonly bool ownsRuntime;
     readonly CancellationTokenSource lifetime=new();
     readonly ComboBox models=new() {Dock=DockStyle.Top,DropDownStyle=ComboBoxStyle.DropDownList,Font=new("Segoe UI",9)};
     readonly Label state=new() {Dock=DockStyle.Top,Height=40,ForeColor=Brand.Muted,Font=new("Segoe UI",9),Padding=new(2,4,2,0)};
@@ -29,8 +30,9 @@ public sealed class AssistantPanel : Panel
     bool busy;
     /// <param name="describe">The chat for a request: instructions, then both folders and the request.</param>
     /// <param name="check">Checks the model's answer against the folders it was shown and the request.</param>
-    public AssistantPanel(Func<string,IReadOnlyList<AiMessage>> describe,Func<string,string,(string Reply,TransferPlan? Plan)> check,Func<TransferPlan,Task> runPlan,Func<TransferPlan,string> explain)
+    public AssistantPanel(Func<string,IReadOnlyList<AiMessage>> describe,Func<string,string,(string Reply,TransferPlan? Plan)> check,Func<TransferPlan,Task> runPlan,Func<TransferPlan,string> explain,AiRuntime? ai=null)
     {
+        ownsRuntime=ai==null; runtime=ai??new(()=>new());
         context=describe; read=check; execute=runPlan; explainPlan=explain;
         Dock=DockStyle.Right; Width=340; BackColor=Brand.Canvas; Padding=new(8,8,8,4);
         var header=new Label {Text="AI helper",Dock=DockStyle.Top,Height=26,Font=new("Segoe UI",11,FontStyle.Bold),ForeColor=Brand.Ink};
@@ -43,13 +45,13 @@ public sealed class AssistantPanel : Panel
         input.Controls.AddRange([ask,send]);
         Controls.AddRange([logFrame,plan,input,state,models,header]);
         Brand.StyleInput(ask);
-        new ToolTip().SetToolTip(models,"Ollama model on this PC. Cloud models are not listed, so file names stay on this PC.");
+        new ToolTip().SetToolTip(models,"Verified local Ollama model. Cloud fallback is controlled separately in Settings → AI providers & performance.");
         retry.LinkClicked+=async(_,_)=>await Connect();
         send.Click+=async(_,_)=>await Ask();
         ask.KeyDown+=async(_,e)=> { if(e.KeyCode==Keys.Enter) { e.Handled=e.SuppressKeyPress=true; await Ask(); } };
         dismiss.Click+=(_,_)=>Offer(null,null);
         run.Click+=async(_,_)=> { var action=pending; Offer(null,null); if(action!=null) await action(); };
-        Disposed+=(_,_)=> { lifetime.Cancel(); lifetime.Dispose(); };
+        Disposed+=(_,_)=> { lifetime.Cancel(); if(ownsRuntime) runtime.Dispose(); };
         Say("Hi! Tell me what to copy and where, in your own words. I'll propose a plan; nothing moves until you press Run.");
     }
     string? Model=>models.SelectedItem as string;
@@ -59,16 +61,18 @@ public sealed class AssistantPanel : Panel
         state.Text="Looking for Ollama on this PC…"; models.Items.Clear();
         try
         {
-            var found=await ollama.Models(lifetime.Token);
+            using var timeout=CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token); timeout.CancelAfter(TimeSpan.FromSeconds(20));
+            var found=await runtime.Local.Models(timeout.Token);
+            if(IsDisposed) return;
             foreach(var m in found) models.Items.Add(m.Name);
-            var chosen=Ollama.Choose(found,Environment.GetEnvironmentVariable("HEARTHLINK_OLLAMA_MODEL"));
-            if(chosen==null) { state.Text="Ollama is running but has no local chat model. Run: ollama pull llama3.2"; return; }
+            var chosen=Ollama.Choose(found,!string.IsNullOrWhiteSpace(runtime.Options.OllamaModel)?runtime.Options.OllamaModel:Environment.GetEnvironmentVariable("HEARTHLINK_OLLAMA_MODEL"));
+            if(chosen==null) { state.Text="No local chat model. Discover models or configure optional fallback in Settings."; return; }
             models.SelectedItem=chosen.Name;
-            state.Text="Runs on this PC only. The first answer can take a minute while the model loads.";
+            state.Text=runtime.Options.CloudFallback?"Ollama first; OpenAI then Claude fallback is enabled. Folder metadata may leave this PC.":"Ollama on this PC only. Cloud fallback is off.";
         }
-        catch(Exception e) when(e is HttpRequestException or InvalidDataException or InvalidOperationException or JsonException or TaskCanceledException)
+        catch(Exception e) when(e is HttpRequestException or InvalidDataException or InvalidOperationException or JsonException or OperationCanceledException)
         {
-            if(!IsDisposed) state.Text="Ollama is not running. Start Ollama, then press Retry. (ollama.com)";
+            if(!IsDisposed) state.Text=runtime.Options.CloudFallback?"Ollama unavailable. Configured cloud fallback will be tried when you Ask.":"Ollama is unavailable. Start it, or review AI provider settings.";
         }
     }
     void Say(string text,string who="Helper") { if(IsDisposed) return; log.AppendText((log.TextLength>0?Environment.NewLine+Environment.NewLine:"")+who+": "+text); log.SelectionStart=log.TextLength; log.ScrollToCaret(); }
@@ -78,22 +82,23 @@ public sealed class AssistantPanel : Panel
     {
         string request=ask.Text.Trim();
         if(request.Length==0 || busy) return;
-        if(Model==null) { Say("I need Ollama first. Start it, then press Retry at the top."); return; }
         ask.Clear(); Say(request,"You"); busy=true; send.Enabled=false; Offer(null,null);
-        string before=state.Text; state.Text="Thinking…";
+        string before=state.Text; state.Text=runtime.Options.CloudFallback?"Thinking… Ollama first; cloud fallback may receive folder metadata.":"Thinking… local Ollama only.";
         try
         {
             var messages=context(request);
             // Earlier turns help follow-ups ("and the other folder too"); only the last few are kept.
-            string answer=await ollama.Chat(Model,[messages[0],..history.TakeLast(6),..messages.Skip(1)],TransferAssistant.PlanFormat(),lifetime.Token);
-            var (reply,found)=read(answer,request);
+            var answer=await runtime.Chat([messages[0],..history.TakeLast(6),..messages.Skip(1)],TransferAssistant.PlanFormat(),lifetime.Token,Model);
+            if(IsDisposed) return;
+            var (reply,found)=read(answer.Text,request);
             history.Add(new("user",request)); history.Add(new("assistant",reply));
-            Say(reply);
+            Say(reply,answer.Provider+" · "+answer.Model);
+            before="Answered by "+answer.Provider+" · "+answer.Model;
             if(found!=null) Offer(explainPlan(found),()=>execute(found));
         }
-        catch(Exception e) when(e is HttpRequestException or InvalidDataException or InvalidOperationException or JsonException or TaskCanceledException)
+        catch(Exception e) when(e is HttpRequestException or InvalidDataException or InvalidOperationException or JsonException or OperationCanceledException)
         {
-            if(!IsDisposed) Say("I could not reach Ollama: "+e.Message);
+            if(!IsDisposed) Say("AI request did not complete. Check AI providers, model access and cloud fallback in Settings.");
         }
         finally { if(!IsDisposed) { busy=false; send.Enabled=true; state.Text=before; ask.Focus(); } }
     }
@@ -113,8 +118,7 @@ public sealed class AssistantPanel : Panel
         Offer(null,null);
         if(!failed) { if(batch.Items>0 || message.StartsWith("Transfer stopped",StringComparison.Ordinal)) Say(message+"."); return; }
         Say(message);
-        if(Model==null) return;
-        try { Say(await ollama.Chat(Model,TransferAssistant.ExplainFailure(batch.Verb,message,batch.Items),null,lifetime.Token)); }
-        catch(Exception e) when(e is HttpRequestException or InvalidDataException or InvalidOperationException or JsonException or TaskCanceledException) { }
+        try {var answer=await runtime.Chat(TransferAssistant.ExplainFailure(batch.Verb,message,batch.Items),null,lifetime.Token,Model); Say(answer.Text,answer.Provider);}
+        catch(Exception e) when(e is HttpRequestException or InvalidDataException or InvalidOperationException or JsonException or OperationCanceledException) { }
     }
 }
