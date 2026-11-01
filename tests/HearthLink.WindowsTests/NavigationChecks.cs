@@ -46,19 +46,40 @@ static class NavigationChecks
         var list=(ListView)typeof(MainWindow).GetField("hosts",flags)!.GetValue(owner)!;
         var search=Descendants(owner).OfType<TextBox>().Single(t=>t.Name=="ComputerSearch");
         var original=identity.Config.Hosts.ToArray(); var favorites=identity.Config.Favorites.ToArray();
+        var favoriteFilter=(CheckBox)typeof(MainWindow).GetField("favoritesOnly",flags)!.GetValue(owner)!;
         string first=new('1',64),second=new('2',64);
         try
         {
             identity.Config.Hosts.Clear(); identity.Config.Hosts.AddRange([new("First PC","192.0.2.1",first),new("Second PC","192.0.2.2",second)]);
+            identity.Config.Favorites.Clear();
             typeof(MainWindow).GetMethod("PopulateHosts",flags)!.Invoke(owner,null);
+            favoriteFilter.Checked=true;
+            check(list.Items.Count==0 && identity.Config.Hosts.Count==2,"Favorites filter hides nonfavorites without removing paired computers");
+            var showAll=Descendants(owner).OfType<Button>().SingleOrDefault(b=>b.Name=="ShowAllComputers");
+            check(showAll?.Visible==true,"an empty Favorites view offers Show all computers recovery");
+            showAll!.PerformClick();
+            check(!favoriteFilter.Checked && list.Items.Count==2,"Show all computers restores paired computers from an empty Favorites view");
             search.Text="Second";
             check(list.Items.Count==1 && Equals(list.Items[0].Tag,second),"computer search keeps the filtered peer fingerprint");
             list.Items[0].Selected=true;
             var selected=(Peer?)typeof(MainWindow).GetMethod("SelectedPeer",flags)!.Invoke(owner,null);
             check(selected?.Fingerprint==second,"filtered row actions resolve the selected identity rather than row index");
-            typeof(MainWindow).GetMethod("ToggleFavorite",flags)!.Invoke(owner,null);
+            var favoriteAction=Descendants(owner).OfType<Button>().Single(b=>b.Name=="FavoriteComputer");
+            check(favoriteAction.Enabled && favoriteAction.Text.Contains("Add to favorites"),"selecting a nonfavorite offers an explicit Add to favorites action");
+            favoriteAction.PerformClick();
             search.Clear();
             check(Equals(list.Items[0].Tag,second) && identity.Config.Favorites.Contains(second),"favoriting reorders peers without changing their identities");
+            var savedFavorites=new IdentityStore((string)typeof(IdentityStore).GetField("root",flags)!.GetValue(identity)!);
+            try {check(savedFavorites.Config.Favorites.Contains(second),"Add to favorites persists the selected computer in the user's protected profile");}
+            finally {savedFavorites.Certificate.Dispose();}
+            favoriteFilter.Checked=true;
+            check(list.Items.Count==1 && Equals(list.Items[0].Tag,second) && favoriteAction.Text.Contains("Remove from favorites"),"Favorites only shows the added computer and offers removal");
+            favoriteAction.PerformClick();
+            check(list.Items.Count==0 && showAll.Visible && identity.Config.Hosts.Count==2,"removing the last favorite preserves paired computers and offers recovery");
+            showAll.PerformClick();
+            list.Items.Cast<ListViewItem>().Single(i=>Equals(i.Tag,second)).Selected=true;
+            favoriteAction.PerformClick();
+            check(identity.Config.Favorites.Contains(second),"a computer can be added again after recovering the empty Favorites view");
             identity.Audit(second,"outbound-connected");
             typeof(MainWindow).GetMethod("LoadRecent",flags)!.Invoke(owner,null);
             var recent=(DataGridView)typeof(MainWindow).GetField("recentGrid",flags)!.GetValue(owner)!;
@@ -79,7 +100,7 @@ static class NavigationChecks
         }
         finally
         {
-            identity.Config.Hosts.Clear(); identity.Config.Hosts.AddRange(original); identity.Config.Favorites=favorites.ToList(); search.Clear();
+            identity.Config.Hosts.Clear(); identity.Config.Hosts.AddRange(original); identity.Config.Favorites=favorites.ToList(); search.Clear(); favoriteFilter.Checked=false;
             typeof(MainWindow).GetMethod("PopulateHosts",flags)!.Invoke(owner,null); identity.Save();
         }
         var defaults=new Settings();

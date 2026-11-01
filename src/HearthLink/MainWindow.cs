@@ -77,10 +77,14 @@ public sealed partial class MainWindow : Form
         hosts.Dock=DockStyle.Fill; hosts.BorderStyle=BorderStyle.None; hosts.BackColor=Color.White; hosts.ForeColor=Brand.Ink; hosts.HideSelection=false;
         hosts.Columns.Add("Computer",160); hosts.Columns.Add("Address",145); hosts.Columns.Add("Status",120); hosts.Columns.Add("Last seen",155);
         StyleDeviceList();
+        Brand.Style(favoriteComputer); favoriteComputer.Click+=(_,_)=>ToggleFavorite();
+        hosts.SelectedIndexChanged+=(_,_)=>UpdateFavoriteAction();
+        Brand.Style(showAllComputers); showAllComputers.Click+=(_,_)=> {computerSearch.Clear(); favoritesOnly.Checked=false; PopulateHosts();};
+        noMatches.Controls.Add(noMatchesText); noMatches.Controls.Add(showAllComputers);
         var well=new Panel {Dock=DockStyle.Fill}; well.Controls.Add(hosts); well.Controls.Add(emptyDevices); well.Controls.Add(noMatches);
         computerSearch.TextChanged+=(_,_)=>PopulateHosts(); favoritesOnly.CheckedChanged+=(_,_)=>PopulateHosts();
         var searchRow=new TableLayoutPanel {ColumnCount=2,Dock=DockStyle.Fill,Margin=Padding.Empty};
-        searchRow.ColumnStyles.Add(new(SizeType.Percent,100)); searchRow.ColumnStyles.Add(new(SizeType.Absolute,110));
+        searchRow.ColumnStyles.Add(new(SizeType.Percent,100)); searchRow.ColumnStyles.Add(new(SizeType.Absolute,150));
         searchRow.Controls.Add(computerSearch,0,0); searchRow.Controls.Add(favoritesOnly,1,0);
         address.PlaceholderText="Pairing code (1234-5678-9012) or LAN address"; address.Text=identity.Config.LastTarget; address.Dock=DockStyle.Fill; Brand.StyleInput(address);
         var pairRow=new TableLayoutPanel {Dock=DockStyle.Fill,ColumnCount=2,Padding=new(0,2,0,4),Margin=Padding.Empty};
@@ -91,7 +95,7 @@ public sealed partial class MainWindow : Form
         control.Text="Keyboard & mouse"; control.UseMnemonic=false; control.ForeColor=Brand.Ink; control.Margin=new(0,10,12,0);
         var connect=AsyncAction("Connect",ConnectHost); Brand.Style(connect,true);
         var forget=Action("Remove PC",()=> { if(SelectedPeer() is {} peer) RemovePc(peer.Fingerprint); });
-        devices.Controls.Add(Stack((deviceHeading,64),(searchRow,40),(well,-1),(connectionProgress,32),(pairRow,42),(Row(control,connect),44),(Row(Action("Favorite / unfavorite",ToggleFavorite),forget),44)));
+        devices.Controls.Add(Stack((deviceHeading,64),(searchRow,40),(well,-1),(connectionProgress,32),(pairRow,42),(Row(control,connect),44),(Row(favoriteComputer,forget),44)));
         var access=new Surface {Dock=DockStyle.Fill,Margin=Padding.Empty}; workspace.Controls.Add(access,0,2);
         controllers.Dock=DockStyle.Fill; controllers.BorderStyle=BorderStyle.None; controllers.BackColor=Color.White; controllers.ForeColor=Brand.Ink; controllers.HorizontalScrollbar=true;
         controllers.DrawMode=DrawMode.OwnerDrawFixed; controllers.ItemHeight=42;
@@ -366,9 +370,14 @@ public sealed partial class MainWindow : Form
         }
         finally {hosts.EndUpdate();}
         emptyDevices.Visible=identity.Config.Hosts.Count==0;
+        noMatchesText.Text=favoritesOnly.Checked && !identity.Config.Hosts.Any(p=>IsFavorite(p.Fingerprint))
+            ?"No favorites yet. Show all computers, select one, then choose Add to favorites."
+            :favoritesOnly.Checked?"No favorites match your search. Show all computers to choose a favorite."
+            :"No computers match your search. Show all computers to clear the search.";
         noMatches.Visible=identity.Config.Hosts.Count>0 && hosts.Items.Count==0;
         hosts.Visible=hosts.Items.Count>0;
         UpdateDeviceCount();
+        UpdateFavoriteAction();
         FitHostColumns();
     }
     async Task PairHost()

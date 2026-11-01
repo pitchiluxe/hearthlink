@@ -10,8 +10,11 @@ public sealed partial class MainWindow
     readonly Dictionary<string,Button> navigation=[];
     readonly Dictionary<string,string> peerStates=new(StringComparer.Ordinal);
     readonly TextBox computerSearch=new() {Name="ComputerSearch",PlaceholderText="Search computers or addresses",Dock=DockStyle.Fill};
-    readonly CheckBox favoritesOnly=new() {Text="Favorites",Dock=DockStyle.Fill,AutoSize=true};
-    readonly Label noMatches=new() {Text="No matching computers. Clear search or turn off Favorites.",Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,Visible=false};
+    readonly CheckBox favoritesOnly=new() {Name="FavoritesOnly",Text="Favorites only",Dock=DockStyle.Fill,AutoSize=true};
+    readonly Panel noMatches=new() {Dock=DockStyle.Fill,Visible=false};
+    readonly Label noMatchesText=new() {Dock=DockStyle.Fill,TextAlign=ContentAlignment.MiddleCenter,Padding=new(12)};
+    readonly Button showAllComputers=new() {Name="ShowAllComputers",Text="Show all computers",Dock=DockStyle.Bottom,Height=40};
+    readonly Button favoriteComputer=new() {Name="FavoriteComputer",Text="☆ Add to favorites",AutoSize=true,Enabled=false};
     readonly DataGridView historyGrid=ActivityGrid("Time","Computer","Event");
     readonly DataGridView recentGrid=ActivityGrid("Last connected","Computer","Address");
     readonly DataGridView healthGrid=ActivityGrid("Computer","Status","Last seen");
@@ -221,13 +224,23 @@ public sealed partial class MainWindow
         computerSearch.Clear(); favoritesOnly.Checked=false; PopulateHosts();
         foreach(ListViewItem item in hosts.Items) {item.Selected=Equals(item.Tag,fingerprint); if(item.Selected) item.EnsureVisible();}
     }
+    void UpdateFavoriteAction()
+    {
+        var peer=SelectedPeer();
+        favoriteComputer.Enabled=peer!=null;
+        favoriteComputer.Text=peer!=null && IsFavorite(peer.Fingerprint)?"★ Remove from favorites":"☆ Add to favorites";
+    }
     void ToggleFavorite()
     {
         if(SelectedPeer() is not {} peer) {connectionProgress.Text="Select a computer to change its favorite status."; return;}
         identity.Config.Favorites??=[];
         bool wasFavorite=IsFavorite(peer.Fingerprint);
         if(wasFavorite) identity.Config.Favorites.Remove(peer.Fingerprint); else identity.Config.Favorites.Add(peer.Fingerprint);
-        try {identity.Save(); PopulateHosts();}
+        try
+        {
+            identity.Save(); PopulateHosts();
+            connectionProgress.Text=PeerName.Clean(peer.Name)+(wasFavorite?" removed from favorites.":" added to favorites. Use Favorites only to find it quickly.");
+        }
         catch(Exception e) when(e is IOException or UnauthorizedAccessException)
         {
             if(wasFavorite) identity.Config.Favorites.Add(peer.Fingerprint); else identity.Config.Favorites.Remove(peer.Fingerprint);

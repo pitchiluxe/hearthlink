@@ -24,21 +24,26 @@ static (Uri Address,Task<bool> Accepted) WebSocketServer()
 {
     var listener=new TcpListener(IPAddress.Loopback,0); listener.Start();
     var address=new Uri($"ws://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}/v1/status");
-    return (address,Task.Run(async()=>
+    var accepted=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    _=Task.Run(async()=>
     {
+        using var lifetime=new CancellationTokenSource(TimeSpan.FromSeconds(10));
         try
         {
-            using var client=await listener.AcceptTcpClientAsync().WaitAsync(TimeSpan.FromSeconds(10));
+            using var client=await listener.AcceptTcpClientAsync(lifetime.Token);
             var stream=client.GetStream(); var request=new System.Text.StringBuilder(); var one=new byte[1];
-            while(!request.ToString().EndsWith("\r\n\r\n") && await stream.ReadAsync(one)==1) request.Append((char)one[0]);
+            while(!request.ToString().EndsWith("\r\n\r\n") && await stream.ReadAsync(one,lifetime.Token)==1) request.Append((char)one[0]);
             string key=request.ToString().Split("\r\n").First(l=>l.StartsWith("Sec-WebSocket-Key:",StringComparison.OrdinalIgnoreCase))[18..].Trim();
             string accept=Convert.ToBase64String(System.Security.Cryptography.SHA1.HashData(System.Text.Encoding.ASCII.GetBytes(key+"258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
-            await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"));
-            return true;
+            await stream.WriteAsync(System.Text.Encoding.ASCII.GetBytes($"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: {accept}\r\n\r\n"),lifetime.Token);
+            accepted.TrySetResult(true);
+            // Keep the upgraded socket alive until its client closes; closing during ConnectAsync races the Open assertion.
+            while(await stream.ReadAsync(one,lifetime.Token)>0) { }
         }
-        catch(Exception) { return false; }
-        finally { listener.Stop(); }
-    }));
+        catch(Exception) {accepted.TrySetResult(false);}
+        finally {listener.Stop();}
+    });
+    return (address,accepted.Task);
 }
 /// <summary>A "proxy" that accepts connections and never answers, like a dead free public proxy. Counts connections it received.</summary>
 static (WebProxy Proxy,Func<int> Connections,Action Stop) StalledProxy()
@@ -62,9 +67,17 @@ try
         {
             var (viaProxy,_)=WebSocketServer();
             using(var routed=new ClientWebSocket()) { routed.Options.Proxy=proxy; bool stalled=false; try { await routed.ConnectAsync(viaProxy,new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token); } catch(OperationCanceledException) { stalled=true; } Check(stalled,"fixture: a WebSocket routed through the stalled proxy hangs"); }
-            var (direct,accepted)=WebSocketServer(); var clock=System.Diagnostics.Stopwatch.StartNew();
-            using(var socket=await RelayClient.Dial(direct,proxy,new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token))
-                Check(socket.State==WebSocketState.Open && await accepted && clock.Elapsed<TimeSpan.FromSeconds(3),"relay dials direct when a stalled system proxy is set");
+            var (direct,accepted)=WebSocketServer();
+            // Use a separate proxy so late accepts from the deliberately stalled probe cannot affect this assertion.
+            var (directProxy,directConnections,stopDirectProxy)=StalledProxy();
+            try
+            {
+                using var socket=await RelayClient.Dial(direct,directProxy,new CancellationTokenSource(TimeSpan.FromSeconds(10)).Token);
+                bool directAccepted=await accepted;
+                Check(socket.State==WebSocketState.Open && directAccepted && directConnections()==0,
+                    $"relay dials direct when a stalled system proxy is set (state={socket.State}, accepted={directAccepted}, proxy contacts={directConnections()})");
+            }
+            finally {stopDirectProxy();}
             int before=proxyConnections(); bool failed=false;
             var closed=new TcpListener(IPAddress.Loopback,0); closed.Start(); var unreachable=new Uri($"ws://127.0.0.1:{((IPEndPoint)closed.LocalEndpoint).Port}/v1/status"); closed.Stop();
             try { using var _=await RelayClient.Dial(unreachable,proxy,new CancellationTokenSource(TimeSpan.FromSeconds(3)).Token); } catch(Exception) { failed=true; }

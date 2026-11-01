@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.6.3 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.6.4 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.6.4 makes favorites easier to manage. Select a paired computer, then choose **☆ Add to favorites**; the button becomes **★ Remove from favorites** for a saved favorite. **Favorites only** filters the list without deleting paired PCs. An empty filtered list explains what happened and offers **Show all computers** to clear the filter/search and choose computers to favorite. Favorites remain saved in the current user's protected profile.
 
 Version 0.6.3 starts HearthLink minimized after Windows sign-in by default. Open the new version once to register startup; change it in **Settings → General → Start HearthLink when I sign in to Windows → Save preferences**. Startup does not enable hosting or unattended access. The viewer's **Commands** menu adds confirmed **Restart / Reboot**, **Sign out**, and **Shut down** for control sessions; update the host to 0.6.3 to enable commands. These actions end the remote session and do not force-close unsaved work. Ctrl+Alt+Delete is shown disabled because this build has no privileged Windows service. See [0.6.3 details](docs/UPDATE-0.6.3.md).
 
