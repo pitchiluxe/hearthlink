@@ -9,6 +9,7 @@ public sealed class Settings
 {
     public string Name { get; set; }=Environment.MachineName;
     public string LastTarget {get;set;}="";
+    public bool StartWithWindows {get;set;}=true;
     public bool CheckUpdates {get;set;}=true;
     public bool Host { get; set; }
     public bool Controller { get; set; }=true;

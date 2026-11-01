@@ -47,6 +47,7 @@ static (WebProxy Proxy,Func<int> Connections,Action Stop) StalledProxy()
     _=Task.Run(async()=> { try { while(true) { var c=await listener.AcceptTcpClientAsync(); lock(held) held.Add(c); Interlocked.Increment(ref connections); } } catch(Exception) { } });
     return (new WebProxy($"http://127.0.0.1:{((IPEndPoint)listener.LocalEndpoint).Port}"),()=>Volatile.Read(ref connections),()=> { listener.Stop(); lock(held) held.ForEach(c=>c.Dispose()); });
 }
+StartupChecks.Run((value,name)=> {if(!value) throw new Exception("FAIL: "+name); Console.WriteLine("PASS: "+name);});
 { var free=new TcpListener(IPAddress.Loopback,0); free.Start(); Connection.Port=((IPEndPoint)free.LocalEndpoint).Port; free.Stop(); }
 var root=Path.Combine(Path.GetTempPath(),"HearthLink-tests-"+Guid.NewGuid().ToString("N"));
 Directory.CreateDirectory(root);
@@ -148,6 +149,11 @@ try
     var fixture=await ready.Task.WaitAsync(TimeSpan.FromSeconds(15));
     try
     {
+        if(args.Contains("--viewer-only"))
+        {
+            await ViewerChecks.Run(fixture.Window,host,controller,Check);
+            Console.WriteLine($"{passed} focused Windows checks passed."); return;
+        }
         await DeviceListChecks.Run(fixture.Window,Check);
         await PendingTrustChecks.Run(fixture.Window,host,controller,Check);
         await NavigationChecks.Run(fixture.Window,Check);

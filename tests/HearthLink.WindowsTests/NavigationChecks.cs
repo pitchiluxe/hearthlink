@@ -90,10 +90,10 @@ static class NavigationChecks
         string folder=Path.Combine(Path.GetTempPath(),"HearthLink-navigation-"+Guid.NewGuid().ToString("N"));
         try
         {
-            var store=new IdentityStore(folder); store.Config.DefaultControl=false; store.Config.DefaultQuality=3; store.Config.Favorites.Add(second); store.Save();
+            var store=new IdentityStore(folder); store.Config.StartWithWindows=false; store.Config.DefaultControl=false; store.Config.DefaultQuality=3; store.Config.Favorites.Add(second); store.Save();
             store.Config.Ai=new() {CloudFallback=true,OpenAIKey="fixture-openai-key",OpenAIModel="gpt-fixture",ClaudeKey="fixture-claude-key",ClaudeModel="claude-fixture",MinimumQuality=1,MaximumQuality=3}; store.Save();
             var loaded=new IdentityStore(folder);
-            check(!loaded.Config.DefaultControl && loaded.Config.DefaultQuality==3 && loaded.Config.Favorites.Contains(second),"new preferences survive protected storage roundtrip");
+            check(!loaded.Config.StartWithWindows && !loaded.Config.DefaultControl && loaded.Config.DefaultQuality==3 && loaded.Config.Favorites.Contains(second),"new preferences survive protected storage roundtrip");
             check(loaded.Config.Ai.CloudFallback && loaded.Config.Ai.OpenAIKey=="fixture-openai-key" && loaded.Config.Ai.MinimumQuality==1 &&
                 !System.Text.Encoding.UTF8.GetString(File.ReadAllBytes(Path.Combine(folder,"settings.protected"))).Contains("fixture-openai-key") && !loaded.Config.Ai.ToString().Contains("fixture"),"AI keys and preferences roundtrip through DPAPI without plaintext credential storage or diagnostic rendering");
             using(var runtime=new AiRuntime(()=>store.Config.Ai))

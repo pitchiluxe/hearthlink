@@ -17,10 +17,11 @@ public sealed class Viewer : Form
         public void ShowFrame(Image image,long sequence) { var old=Image; Image=image; old?.Dispose(); Invalidate(); Presented?.Invoke(sequence); }
     }
     readonly RemoteScreen screen=new() {Dock=DockStyle.Fill,SizeMode=PictureBoxSizeMode.Zoom,BackColor=Color.Black};
+    readonly Label commandNotice=new() {Dock=DockStyle.Bottom,Height=48,BackColor=Brand.Navy,ForeColor=Color.White,TextAlign=ContentAlignment.MiddleCenter,Visible=false};
     readonly Label status=new() {ForeColor=Color.White,AutoEllipsis=true,Width=310,Height=38,Padding=new(8)};
     readonly CancellationTokenSource stop=new();
     readonly InputMailbox outbound=new();
-    readonly bool control;
+    readonly bool control,commandsSupported;
     readonly Stopwatch counter=Stopwatch.StartNew();
     int desiredMonitor,shownFrames;
     VideoFrame? current;
@@ -53,9 +54,9 @@ public sealed class Viewer : Form
     public bool SessionActive=>!stop.IsCancellationRequested && !closing && !sessionLost;
     [System.ComponentModel.Browsable(false)]
     public bool CanTransfer=>SessionActive && control && filesFactory!=null;
-    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=2,AiRuntime? aiRuntime=null)
+    public Viewer(Connection c,string name,bool allowControl,string[] monitors,string route="relay",Func<CancellationToken,Task<Connection>>? openFiles=null,Func<Task>? reconnect=null,Action<TransferStrip>? observeTransfers=null,int initialQuality=2,AiRuntime? aiRuntime=null,bool supportsCommands=false)
     {
-        connection=c; control=allowControl;
+        connection=c; control=allowControl; commandsSupported=supportsCommands;
         filesFactory=openFiles; observeTransfer=observeTransfers;
         ai=aiRuntime;
         if(ai!=null)
@@ -78,7 +79,7 @@ public sealed class Viewer : Form
         var fullscreen=Brand.Style(new Button {Text="Full screen",AutoSize=true}); fullscreen.Click+=(_,_)=>ToggleFull();
         var disconnect=Brand.Style(new Button {Text="Disconnect",AutoSize=true},true); disconnect.Click+=(_,_)=>Close();
         status.Text=(control?"Connected • Control":"Connected • View only")+" • "+route;
-        bar.Controls.AddRange([displays,profile]);
+        bar.Controls.AddRange([displays,profile,CommandMenu()]);
         if(control && openFiles!=null)
         {
             var strip=transfers=new TransferStrip(openFiles);
@@ -111,6 +112,7 @@ public sealed class Viewer : Form
         bar.Controls.AddRange([fullscreen,disconnect,status]); Controls.Add(bar); Controls.Add(screen); bar.BringToFront();
         // Added after the screen so it docks first and the screen fills what is left.
         if(transfers!=null) Controls.Add(transfers);
+        Controls.Add(commandNotice);
         var lostButtons=new FlowLayoutPanel {Dock=DockStyle.Bottom,AutoSize=true,FlowDirection=FlowDirection.RightToLeft,WrapContents=false};
         var close=Brand.Style(new Button {Text="Close",AutoSize=true}); close.Click+=(_,_)=>Close();
         lostButtons.Controls.Add(close);
@@ -160,6 +162,33 @@ public sealed class Viewer : Form
             var writing=Task.Run(WriteInput); await Task.Run(ReadFrames); stop.Cancel(); Drop();
             try {await writing;} catch(OperationCanceledException) { }
         };
+    }
+    Button CommandMenu()
+    {
+        var button=Brand.Style(new Button {Name="SessionCommands",Text=commandsSupported?"Commands  ▾":"Commands (update host)",AutoSize=true,Enabled=control && commandsSupported});
+        var menu=new ContextMenuStrip {Font=Font,ShowImageMargin=false}; button.Tag=menu;
+        menu.Items.Add(new ToolStripMenuItem("Ctrl+Alt+Delete (requires Windows service)") {Enabled=false});
+        foreach(var (label,command) in new[] {("Restart / Reboot","restart"),("Sign out","signout"),("Shut down","shutdown")})
+        {
+            var item=new ToolStripMenuItem(label);
+            item.Click+=(_,_)=>
+            {
+                if(!SessionActive || !control || !commandsSupported) return;
+                holdBar=true;
+                try
+                {
+                    if(MessageBox.Show(this,label+" the connected PC? This ends the remote session. Save work there first. HearthLink starts again after Windows sign-in.","Remote PC: "+label,MessageBoxButtons.YesNo,MessageBoxIcon.Warning,MessageBoxDefaultButton.Button2)==DialogResult.Yes && SessionActive)
+                    {Post(new("release")); Post(new("session-command",Text:command));}
+                }
+                finally {holdBar=false;}
+            };
+            menu.Items.Add(item);
+        }
+        menu.Opened+=(_,_)=>menuOpen=true; menu.Closed+=(_,_)=>menuOpen=false;
+        button.Click+=(_,_)=>menu.Show(button,new Point(0,button.Height));
+        button.Disposed+=(_,_)=>menu.Dispose();
+        SessionStateChanged+=()=>button.Enabled=control && commandsSupported && SessionActive;
+        return button;
     }
     public void OpenFileManager()
     {
@@ -256,7 +285,7 @@ public sealed class Viewer : Form
     }
     void Post(Packet packet)
     {
-        if(stop.IsCancellationRequested || (!control && packet.Kind is "key" or "move" or "button" or "wheel" or "release")) return;
+        if(stop.IsCancellationRequested || (!control && packet.Kind is "key" or "move" or "button" or "wheel" or "release" or "session-command")) return;
         if(!outbound.Post(packet)) {stop.Cancel(); Drop(); Lose("The connection to the other PC stopped responding.");}
     }
     async Task WriteInput()
@@ -272,6 +301,11 @@ public sealed class Viewer : Form
             while(!stop.IsCancellationRequested)
             {
                 var packet=await connection.Read(stop.Token).ConfigureAwait(false);
+                if(packet.Kind=="command-result")
+                {
+                    await this.InvokeAsync(()=> {if(!IsDisposed) {commandNotice.Text=packet.Text; commandNotice.Visible=true;}},stop.Token);
+                    continue;
+                }
                 var frame=packet.Frame??throw new InvalidDataException("Unsupported stream. Update both PCs to HearthLink 0.2.0.");
                 if(frame.Sequence<=lastSequence) throw new InvalidDataException("Out-of-order video frame.");
                 lastSequence=frame.Sequence;

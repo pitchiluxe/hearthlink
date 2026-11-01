@@ -3,6 +3,7 @@ using System.Buffers.Binary;
 
 int passed = 0;
 void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
+SessionCommandChecks.Run(Check);
 var gate = new PairingGate();
 Check(!gate.Consume("00000000", DateTimeOffset.UtcNow), "pairing closed by default");
 var now = DateTimeOffset.UtcNow;

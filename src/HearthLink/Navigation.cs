@@ -80,6 +80,7 @@ public sealed partial class MainWindow
         var defaultControl=new CheckBox {Name="DefaultControl",Text="Request keyboard and mouse control by default",Checked=identity.Config.DefaultControl,AutoSize=true};
         var quality=new ComboBox {Name="DefaultQuality",DropDownStyle=ComboBoxStyle.DropDownList,Width=230};
         quality.Items.AddRange(DesktopCapture.Profiles); quality.SelectedIndex=Math.Clamp(identity.Config.DefaultQuality,0,DesktopCapture.Profiles.Length-1);
+        var startup=new CheckBox {Name="StartWithWindows",Text="Start HearthLink when I sign in to Windows",Checked=identity.Config.StartWithWindows,AutoSize=true};
         var autoUpdates=new CheckBox {Name="AutoUpdates",Text="Automatically check for updates at launch and daily",Checked=identity.Config.CheckUpdates,AutoSize=true};
         var settingsNote=Note("Changes apply to new sessions. Existing sessions keep their current quality and access mode.");
         var recentControl=new CheckBox {Text="Keyboard & mouse",UseMnemonic=false,Checked=control.Checked,AutoSize=true,Margin=new(0,10,10,0)};
@@ -89,17 +90,18 @@ public sealed partial class MainWindow
         {
             try
             {
-                bool previousControl=identity.Config.DefaultControl,previousUpdates=identity.Config.CheckUpdates; int previousQuality=identity.Config.DefaultQuality;
+                bool previousStartup=identity.Config.StartWithWindows,previousControl=identity.Config.DefaultControl,previousUpdates=identity.Config.CheckUpdates; int previousQuality=identity.Config.DefaultQuality;
                 identity.Config.DefaultControl=defaultControl.Checked; identity.Config.DefaultQuality=quality.SelectedIndex; identity.Config.CheckUpdates=autoUpdates.Checked;
-                try {identity.Save();}
-                catch {identity.Config.DefaultControl=previousControl; identity.Config.DefaultQuality=previousQuality; identity.Config.CheckUpdates=previousUpdates; throw;}
+                identity.Config.StartWithWindows=startup.Checked;
+                try {WindowsStartup.Apply(startup.Checked); identity.Save();}
+                catch {identity.Config.StartWithWindows=previousStartup; try {WindowsStartup.Apply(previousStartup);} catch { } identity.Config.DefaultControl=previousControl; identity.Config.DefaultQuality=previousQuality; identity.Config.CheckUpdates=previousUpdates; throw;}
                 control.Checked=defaultControl.Checked; settingsNote.Text="Preferences saved. They apply to new sessions.";
             }
-            catch(Exception e) when(e is IOException or UnauthorizedAccessException) {settingsNote.Text="Could not save. Check disk space and access to your profile folder.";}
+            catch(Exception e) when(e is IOException or UnauthorizedAccessException or System.Security.SecurityException) {settingsNote.Text="Could not save. Check disk space and access to your profile folder.";}
         });
         var general=ScrollSettings(
             (Title("Computer name",14),34),(nameEditor,46),(controllerEnabled,40),(Title("New sessions",14),48),
-            (defaultControl,40),(Note("Default image quality"),30),(Row(quality),44),(autoUpdates,48),
+            (defaultControl,40),(Note("Default image quality"),30),(Row(quality),44),(autoUpdates,48),(startup,40),(Note("Starts minimized after sign-in. Remote access still follows Access & security settings."),56),
             (Row(saveDefaults),48),(settingsNote,64));
         var settingsTabs=new TabControl {Name="SettingsTabs",Dock=DockStyle.Fill};
         var generalTab=new TabPage("General") {BackColor=Color.White}; generalTab.Controls.Add(general); settingsTabs.TabPages.Add(generalTab);

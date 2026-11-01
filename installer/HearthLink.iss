@@ -1,4 +1,4 @@
-#define AppVersion "0.6.2"
+#define AppVersion "0.6.3"
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"
 #endif
@@ -9,7 +9,7 @@ AppVersion={#AppVersion}
 DefaultDirName={autopf}\HearthLink
 DefaultGroupName=HearthLink
 OutputDir=..\artifacts
-OutputBaseFilename=HearthLink-0.6.2-win-x64-setup
+OutputBaseFilename=HearthLink-0.6.3-win-x64-setup
 SetupIconFile=..\assets\HearthLink.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -29,5 +29,7 @@ Name: "{group}\Uninstall HearthLink"; Filename: "{uninstallexe}"
 [Run]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall add rule name=""HearthLink Host TCP"" dir=in action=allow program=""{app}\HearthLink.exe"" protocol=TCP localport=45831 remoteip=localsubnet profile=private"; Flags: runhidden waituntilterminated; Tasks: firewall
 Filename: "{app}\HearthLink.exe"; Description: "Launch HearthLink"; Flags: nowait postinstall skipifsilent runasoriginaluser
+[Registry]
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueName: "HearthLink"; ValueType: none; Flags: dontcreatekey uninsdeletevalue
 [UninstallRun]
 Filename: "{sys}\netsh.exe"; Parameters: "advfirewall firewall delete rule name=""HearthLink Host TCP"" program=""{app}\HearthLink.exe"""; Flags: runhidden waituntilterminated; RunOnceId: "RemoveHearthLinkFirewall"

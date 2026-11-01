@@ -457,7 +457,7 @@ public sealed partial class MainWindow : Form
                 catch(Exception e) { if(!navigationLifetime.IsCancellationRequested) {connectionProgress.Text="Connection did not complete • try again when the remote PC is ready"; MessageBox.Show(this,Explain(e),"HearthLink",MessageBoxButtons.OK,MessageBoxIcon.Warning);} }
             };
             var viewer=new Viewer(connection,name,allowControl,reply.Monitors??["Display 1"],route,openFiles,reconnect,
-                strip=>ObserveTransfer(strip,name),Math.Clamp(identity.Config.DefaultQuality,0,DesktopCapture.Profiles.Length-1),ai);
+                strip=>ObserveTransfer(strip,name),Math.Clamp(identity.Config.DefaultQuality,0,DesktopCapture.Profiles.Length-1),ai,supportsCommands:reply.Commands?.Contains("session-command")==true);
             viewer.FormClosed+=(_,_)=>RefreshSessionShortcut();
             viewer.SessionStateChanged+=RefreshSessionShortcut;
             viewer.Show(this); connection=null;

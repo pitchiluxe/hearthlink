@@ -36,10 +36,45 @@ static class ViewerChecks
         var defaultViewer=await window.OnUi(()=> {var v=new Viewer(defaultEnd,"default quality",false,["1: test"]) {ShowInTaskbar=false,WindowState=FormWindowState.Minimized}; v.Show(); return v;});
         try
         {
+            check(await window.OnUi(()=>!defaultViewer.Controls.OfType<FlowLayoutPanel>().SelectMany(p=>p.Controls.OfType<Button>()).Single(b=>b.Name=="SessionCommands").Enabled),"view-only and older hosts have no enabled remote command menu");
             var defaultProfile=await defaultHost.Read(limit.Token);
             check(defaultProfile.Kind=="profile" && defaultProfile.Value==2,"a default viewer requests Full detail from the remote host");
         }
         finally {await window.OnUi(()=> {defaultViewer.Close(); return true;}); defaultHost.Dispose();}
+
+        var (commandEnd,commandHost)=await FileChecks.Linked(host,controller);
+        var commandViewer=await window.OnUi(()=> {var v=new Viewer(commandEnd,"commands",true,["test"],initialQuality:0,supportsCommands:true); v.Show(); return v;});
+        try
+        {
+            var state=await window.OnUi(()=>
+            {
+                var button=commandViewer.Controls.OfType<FlowLayoutPanel>().SelectMany(p=>p.Controls.OfType<Button>()).Single(b=>b.Name=="SessionCommands");
+                var menu=(ContextMenuStrip)button.Tag!;
+                return (button.Enabled,Menu:menu,Thread:NativeDialogs.CurrentThread());
+            });
+            check(state.Enabled && state.Menu.Items.Count==4 && !state.Menu.Items[0].Enabled,"control menu exposes power actions and explains unavailable Ctrl+Alt+Delete");
+            foreach(var (index,command) in new[] {(1,"restart"),(2,"signout"),(3,"shutdown")})
+            {
+                var answer=NativeDialogs.Answer(state.Thread,NativeDialogs.Yes,TimeSpan.FromSeconds(5));
+                await window.OnUi(()=> {state.Menu.Items[index].PerformClick(); return true;});
+                check((await answer).Contains("connected PC"),"remote "+command+" requires explicit confirmation");
+                Packet packet;
+                do {packet=await commandHost.Read(limit.Token);} while(packet.Kind!="session-command");
+                check(packet.Text==command,"confirmed "+command+" is sent only to the connected peer");
+            }
+            await commandHost.Send(new("command-result",Text:"Windows could not complete the command."),limit.Token);
+            await commandHost.Send(new("frame",Frame:new(Jpeg(1),64,48,0,1,100,100,10)),limit.Token);
+            Packet feedback;
+            do {feedback=await commandHost.Read(limit.Token);} while(feedback.Kind!="presented");
+            check(feedback.Sequence==1 && await window.OnUi(()=>commandViewer.Controls.OfType<Label>().Any(l=>l.Visible && l.Text.Contains("could not complete"))),"command failure stays visible while video acknowledgements continue");
+            var reject=NativeDialogs.Answer(state.Thread,NativeDialogs.No,TimeSpan.FromSeconds(5));
+            await window.OnUi(()=> {state.Menu.Items[3].PerformClick(); return true;}); await reject;
+            using var silence=new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+            bool sent=false;
+            try {while(true) {if((await commandHost.Read(silence.Token)).Kind=="session-command") {sent=true; break;}}} catch(OperationCanceledException) { }
+            check(!sent,"declining the shutdown confirmation sends no power command");
+        }
+        finally {await window.OnUi(()=> {commandViewer.Close(); return true;}); commandHost.Dispose();}
 
         bool ended=false;
         // Do not depend on or move the user's actual pointer: hovering intentionally keeps the notice open.

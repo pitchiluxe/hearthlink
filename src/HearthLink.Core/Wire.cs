@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace HearthLink.Core;
 public sealed record Packet(string Kind, string? Text=null, string? Name=null, string? Code=null,
     string? Data=null, int X=0, int Y=0, int Value=0, bool Down=false, bool Control=false, string[]? Monitors=null,
-    long Sequence=0,[property:JsonIgnore] VideoFrame? Frame=null,[property:JsonIgnore] FileChunk? Chunk=null);
+    long Sequence=0,[property:JsonIgnore] VideoFrame? Frame=null,[property:JsonIgnore] FileChunk? Chunk=null,string[]? Commands=null);
 public static class Wire
 {
     public const int MaxLength=16*1024*1024;

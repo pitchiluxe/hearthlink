@@ -140,7 +140,7 @@ public sealed class HostServer : IDisposable
                             }
                             catch(OperationCanceledException) { }
                         });
-                        await connection.Send(new("ready",Value:Wire.ProtocolVersion,Code:request.Control?grant.Token:null,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray()),stop.Token);
+                        await connection.Send(new("ready",Value:Wire.ProtocolVersion,Code:request.Control?grant.Token:null,Monitors:Screen.AllScreens.Select((s,i)=>$"{i+1}: {s.Bounds.Width} × {s.Bounds.Height}").ToArray(),Commands:["session-command"]),stop.Token);
                         frames=Task.Run(async()=>
                         {
                             try
@@ -173,6 +173,24 @@ public sealed class HostServer : IDisposable
                             if(p.Kind=="presented") {window.Acknowledge(p.Sequence); continue;}
                             if(p.Kind=="monitor" && p.Value>=0 && p.Value<Screen.AllScreens.Length) { Volatile.Write(ref monitor,p.Value); continue; }
                             if(p.Kind=="profile" && p.Value>=0 && p.Value<DesktopCapture.Profiles.Length) {Volatile.Write(ref profile,p.Value); continue;}
+                            if(p.Kind=="session-command")
+                            {
+                                var arguments=SessionCommands.Arguments(request.Control,p.Text);
+                                if(arguments!=null)
+                                {
+                                    try
+                                    {
+                                        using var process=Process.Start(new ProcessStartInfo(Path.Combine(Environment.SystemDirectory,"shutdown.exe"),arguments) {UseShellExecute=false,CreateNoWindow=true});
+                                        if(process!=null) await process.WaitForExitAsync(stop.Token);
+                                        bool accepted=process?.ExitCode==0;
+                                        identity.Audit(fingerprint,accepted?"requested-"+p.Text:"session-command-failed");
+                                        await connection.Send(new("command-result",Text:accepted?"Windows accepted the command.":"Windows could not complete the command. Check permissions and unsaved work on the remote PC."),stop.Token);
+                                    }
+                                    catch(Exception e) when(e is System.ComponentModel.Win32Exception or InvalidOperationException or IOException or UnauthorizedAccessException)
+                                    {identity.Audit(fingerprint,"session-command-failed"); await connection.Send(new("command-result",Text:"Windows could not start the command. Check permissions on the remote PC."),stop.Token);}
+                                }
+                                continue;
+                            }
                             if(!request.Control) continue;
                             if(p.Kind=="release")
                             {
