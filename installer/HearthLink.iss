@@ -1,4 +1,4 @@
-#define AppVersion "0.6.4"
+#define AppVersion "0.6.5"
 #ifndef PublishDir
   #define PublishDir "..\artifacts\publish"
 #endif
@@ -9,7 +9,7 @@ AppVersion={#AppVersion}
 DefaultDirName={autopf}\HearthLink
 DefaultGroupName=HearthLink
 OutputDir=..\artifacts
-OutputBaseFilename=HearthLink-0.6.4-win-x64-setup
+OutputBaseFilename=HearthLink-0.6.5-win-x64-setup
 SetupIconFile=..\assets\HearthLink.ico
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

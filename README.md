@@ -1,6 +1,8 @@
 # HearthLink
 
-Original Windows 11 remote desktop application for your own PCs. **Version 0.6.4 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+Original Windows 11 remote desktop application for your own PCs. **Version 0.6.5 is an attended test build, not the complete requested release. Two-physical-PC acceptance is pending.** No fake devices or simulated sessions appear in the application.
+
+Version 0.6.5 fixes the unresponsive **Commands (update host)** button. **Commands** now stays clickable during a live session: an older host shows instructions to update HearthLink on the remote PC, reopen it and reconnect; a view-only session explains how to reconnect with **Keyboard & mouse**. Compatible control sessions show the existing confirmed command menu. No commands are sent to incompatible hosts or from view-only sessions.
 
 Version 0.6.4 makes favorites easier to manage. Select a paired computer, then choose **☆ Add to favorites**; the button becomes **★ Remove from favorites** for a saved favorite. **Favorites only** filters the list without deleting paired PCs. An empty filtered list explains what happened and offers **Show all computers** to clear the filter/search and choose computers to favorite. Favorites remain saved in the current user's protected profile.
 

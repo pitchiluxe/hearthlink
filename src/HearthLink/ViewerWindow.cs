@@ -165,12 +165,12 @@ public sealed class Viewer : Form
     }
     Button CommandMenu()
     {
-        var button=Brand.Style(new Button {Name="SessionCommands",Text=commandsSupported?"Commands  ▾":"Commands (update host)",AutoSize=true,Enabled=control && commandsSupported});
+        var button=Brand.Style(new Button {Name="SessionCommands",Text="Commands  ▾",AutoSize=true});
         var menu=new ContextMenuStrip {Font=Font,ShowImageMargin=false}; button.Tag=menu;
         menu.Items.Add(new ToolStripMenuItem("Ctrl+Alt+Delete (requires Windows service)") {Enabled=false});
         foreach(var (label,command) in new[] {("Restart / Reboot","restart"),("Sign out","signout"),("Shut down","shutdown")})
         {
-            var item=new ToolStripMenuItem(label);
+            var item=new ToolStripMenuItem(label) {Enabled=control && commandsSupported};
             item.Click+=(_,_)=>
             {
                 if(!SessionActive || !control || !commandsSupported) return;
@@ -185,9 +185,23 @@ public sealed class Viewer : Form
             menu.Items.Add(item);
         }
         menu.Opened+=(_,_)=>menuOpen=true; menu.Closed+=(_,_)=>menuOpen=false;
-        button.Click+=(_,_)=>menu.Show(button,new Point(0,button.Height));
+        button.Click+=(_,_)=>
+        {
+            if(!SessionActive) return;
+            if(!control)
+            {
+                commandNotice.Text="This is a view-only session. Disconnect, select Keyboard & mouse, then reconnect to use remote commands.";
+                commandNotice.Visible=true; return;
+            }
+            if(!commandsSupported)
+            {
+                commandNotice.Text="Update HearthLink on the remote PC: Help & updates → Check now. Reopen HearthLink there, then disconnect and reconnect this session.";
+                commandNotice.Visible=true; return;
+            }
+            menu.Show(button,new Point(0,button.Height));
+        };
         button.Disposed+=(_,_)=>menu.Dispose();
-        SessionStateChanged+=()=>button.Enabled=control && commandsSupported && SessionActive;
+        SessionStateChanged+=()=>button.Enabled=SessionActive;
         return button;
     }
     public void OpenFileManager()

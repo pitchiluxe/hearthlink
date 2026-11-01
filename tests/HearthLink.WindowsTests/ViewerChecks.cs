@@ -36,11 +36,32 @@ static class ViewerChecks
         var defaultViewer=await window.OnUi(()=> {var v=new Viewer(defaultEnd,"default quality",false,["1: test"]) {ShowInTaskbar=false,WindowState=FormWindowState.Minimized}; v.Show(); return v;});
         try
         {
-            check(await window.OnUi(()=>!defaultViewer.Controls.OfType<FlowLayoutPanel>().SelectMany(p=>p.Controls.OfType<Button>()).Single(b=>b.Name=="SessionCommands").Enabled),"view-only and older hosts have no enabled remote command menu");
+            check(await window.OnUi(()=>
+            {
+                var button=defaultViewer.Controls.OfType<FlowLayoutPanel>().SelectMany(p=>p.Controls.OfType<Button>()).Single(b=>b.Name=="SessionCommands");
+                button.PerformClick();
+                return button.Enabled && defaultViewer.Controls.OfType<Label>().Any(l=>l.Visible && l.Text.Contains("view-only"));
+            }),"view-only Commands click explains how to reconnect with control");
             var defaultProfile=await defaultHost.Read(limit.Token);
             check(defaultProfile.Kind=="profile" && defaultProfile.Value==2,"a default viewer requests Full detail from the remote host");
         }
         finally {await window.OnUi(()=> {defaultViewer.Close(); return true;}); defaultHost.Dispose();}
+
+        var (oldEnd,oldHost)=await FileChecks.Linked(host,controller);
+        var oldViewer=await window.OnUi(()=> {var v=new Viewer(oldEnd,"older host",true,["test"],initialQuality:0); v.Show(); return v;});
+        try
+        {
+            check(await window.OnUi(()=>
+            {
+                var button=oldViewer.Controls.OfType<FlowLayoutPanel>().SelectMany(p=>p.Controls.OfType<Button>()).Single(b=>b.Name=="SessionCommands");
+                button.PerformClick();
+                return button.Enabled && oldViewer.Controls.OfType<Label>().Any(l=>l.Visible && l.Text.Contains("remote PC") && l.Text.Contains("reconnect"));
+            }),"older host Commands click shows remote update and reconnect instructions");
+            using var silence=new CancellationTokenSource(TimeSpan.FromMilliseconds(250)); bool sent=false;
+            try {while(true) {if((await oldHost.Read(silence.Token)).Kind=="session-command") {sent=true; break;}}} catch(OperationCanceledException) { }
+            check(!sent,"older hosts receive no unsupported remote command");
+        }
+        finally {await window.OnUi(()=> {oldViewer.Close(); return true;}); oldHost.Dispose();}
 
         var (commandEnd,commandHost)=await FileChecks.Linked(host,controller);
         var commandViewer=await window.OnUi(()=> {var v=new Viewer(commandEnd,"commands",true,["test"],initialQuality:0,supportsCommands:true); v.Show(); return v;});
